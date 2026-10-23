@@ -30,7 +30,7 @@ import {
   type RasterPdfPage
 } from "./export";
 import { findAvailableHorizontalRight, getTranslatedBlockLayout } from "./layout";
-import { getPdfLaunchOptions, openPdfWorkspaceInNewTab } from "./launch";
+import { getExtensionDetailsUrl, getPdfLaunchOptions, openPdfWorkspaceInNewTab } from "./launch";
 import { extractTextBlocks, type PdfTextBlock } from "./model";
 import { renderPageWithoutText } from "./rendering";
 import "./styles.css";
@@ -83,6 +83,9 @@ const loadingTitle = query<HTMLElement>("#loadingTitle");
 const loadingDetail = query<HTMLElement>("#loadingDetail");
 const progressBar = query<HTMLElement>("#progressBar");
 const statusToast = query<HTMLElement>("#statusToast");
+const fileAccessNotice = query<HTMLElement>("#fileAccessNotice");
+const fileAccessSettingsButton = query<HTMLButtonElement>("#openFileAccessSettings");
+const retryLocalPdfButton = query<HTMLButtonElement>("#retryLocalPdf");
 
 let settings: ExtensionSettings = structuredClone(DEFAULT_SETTINGS);
 let pdfDocument: PDFDocumentProxy | undefined;
@@ -93,6 +96,7 @@ let translationRun = 0;
 let renderedPages = new Set<number>();
 let pageRenderTasks = new Map<number, Promise<void>>();
 let renderObserver: IntersectionObserver | undefined;
+let pendingSource: { url: string; autoTranslate: boolean } | undefined;
 
 void init();
 
@@ -106,8 +110,7 @@ async function init(): Promise<void> {
   const launchOptions = getPdfLaunchOptions(window.location.href);
   if (launchOptions.url) {
     pdfUrlInput.value = launchOptions.url;
-    const opened = await openRemotePdf(launchOptions.url);
-    if (opened && launchOptions.autoTranslate) await translateDocument();
+    await openRequestedPdf(launchOptions.url, launchOptions.autoTranslate);
   }
 }
 
@@ -145,7 +148,14 @@ function bindEvents(): void {
   urlForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = pdfUrlInput.value.trim();
-    if (value) void openRemotePdf(value);
+    if (value) void openRequestedPdf(value);
+  });
+  fileAccessSettingsButton.addEventListener("click", () => {
+    void chrome.tabs.create({ url: getExtensionDetailsUrl(chrome.runtime.id, navigator.userAgent) })
+      .catch((error: unknown) => handleOpenError(error));
+  });
+  retryLocalPdfButton.addEventListener("click", () => {
+    if (pendingSource) void openRequestedPdf(pendingSource.url, pendingSource.autoTranslate);
   });
   replaceButton.addEventListener("click", () => {
     void openPdfWorkspaceInNewTab(
@@ -167,12 +177,24 @@ async function openLocalPdf(file: File): Promise<void> {
   }
   try {
     await loadPdf(await file.arrayBuffer(), file.name);
+    const autoTranslate = pendingSource?.autoTranslate;
+    pendingSource = undefined;
+    if (autoTranslate) await translateDocument();
   } catch (error) {
     handleOpenError(error);
   }
 }
 
-async function openRemotePdf(value: string): Promise<boolean> {
+async function openRequestedPdf(value: string, autoTranslate = false): Promise<void> {
+  pendingSource = { url: value, autoTranslate };
+  const opened = await openPdfUrl(value);
+  if (opened) {
+    pendingSource = undefined;
+    if (autoTranslate) await translateDocument();
+  }
+}
+
+async function openPdfUrl(value: string): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(value);
@@ -180,24 +202,32 @@ async function openRemotePdf(value: string): Promise<boolean> {
     showStatus("PDF 地址格式不正确。", "error");
     return false;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    showStatus("在线地址仅支持 HTTP 或 HTTPS；本地文件请使用“选择 PDF 文件”。", "error");
+  const local = url.protocol === "file:";
+  if (!local && url.protocol !== "http:" && url.protocol !== "https:") {
+    showStatus("PDF 地址仅支持 HTTP、HTTPS 或本地 file 文件地址。", "error");
     return false;
   }
 
-  showLoading("正在下载 PDF", "正在读取在线文档…");
+  fileAccessNotice.hidden = true;
   try {
+    if (local && (!hasExtensionRuntime() || !await chrome.extension.isAllowedFileSchemeAccess())) {
+      fileAccessNotice.hidden = false;
+      fileAccessSettingsButton.hidden = !hasExtensionRuntime();
+      showStatus("请允许访问文件网址后重试，或直接选择这份 PDF 文件。", "info", true);
+      return false;
+    }
+    showLoading(local ? "正在读取本地 PDF" : "正在下载 PDF", local ? "正在读取本地文档…" : "正在读取在线文档…");
     const response = await fetchWithTimeout(url.toString(), PDF_DOWNLOAD_TIMEOUT_MS);
-    if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
+    if (!response.ok) throw new Error(`读取失败（HTTP ${response.status}）`);
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType && !contentType.includes("pdf") && !url.pathname.toLowerCase().endsWith(".pdf")) {
       throw new Error("该地址返回的内容不是 PDF 文件。");
     }
-    const name = decodeURIComponent(url.pathname.split("/").pop() || "在线文档.pdf");
+    const name = decodeURIComponent(url.pathname.split("/").pop() || (local ? "本地文档.pdf" : "在线文档.pdf"));
     const data = await withTimeout(
       response.arrayBuffer(),
       PDF_DOWNLOAD_TIMEOUT_MS,
-      "PDF 文件下载"
+      "PDF 文件读取"
     );
     await loadPdf(data, name);
     return true;
@@ -208,6 +238,7 @@ async function openRemotePdf(value: string): Promise<boolean> {
 }
 
 async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
+  fileAccessNotice.hidden = true;
   showLoading("正在打开 PDF", "正在读取文档结构…");
   translationRun += 1;
   pageStates.forEach((page) => {

@@ -221,6 +221,26 @@ button:disabled {
   max-width: 590px;
 }
 
+.file-access-notice {
+  margin-bottom: 20px;
+  padding: 18px;
+  border: 1px solid #a8cbbb;
+  border-radius: 12px;
+  background: #e6f2eb;
+  line-height: 1.6;
+}
+
+.file-access-notice p {
+  margin: 8px 0 14px;
+  font-size: 13px;
+}
+
+.file-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .eyebrow {
   display: inline-flex;
   align-items: center;
