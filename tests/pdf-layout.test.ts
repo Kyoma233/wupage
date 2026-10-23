@@ -1,9 +1,63 @@
 import { describe, expect, it } from "vitest";
-import { findAvailableHorizontalRight, getTranslatedBlockLayout } from "../src/pdf/layout";
+import { findAvailableHorizontalLeft, findAvailableHorizontalRight, findAvailableVerticalBottom, getTranslatedBlockLayout } from "../src/pdf/layout";
 import type { PdfTextBlock } from "../src/pdf/model";
 
 describe("PDF translated text layout", () => {
-  it("keeps short translated units at the source font size when the cell has room", () => {
+  it("stops manual vertical expansion before preserved equations as well as prose", () => {
+    expect(findAvailableVerticalBottom([
+      [{ x: 20, y: 30, width: 200, height: 20 }],
+      [{ x: 50, y: 70, width: 100, height: 30 }],
+      [{ x: 300, y: 55, width: 100, height: 10 }]
+    ], 0, 800)).toBe(68);
+  });
+  it("measures a formula by its original aspect ratio instead of the token's text width", () => {
+    const block = createBlock("Loss ⟪WUPAGE0⟫", 10, 100);
+    block.formulas = [{ placeholder: "⟪WUPAGE0⟫", text: "α", x: 10, y: 90, width: 8, height: 10, baselineY: 92, fontSize: 10, display: false }];
+    const layout = getTranslatedBlockLayout(createMeasureContext(), "损失 ⟪WUPAGE0⟫", block,
+      [{ x: 10, y: 100, width: 100, height: 12 }], 1)!;
+    expect(layout.fontSize).toBeCloseTo(9.8);
+    expect(layout.lineHeight).toBeCloseTo(9.8 * 1.14);
+  });
+  it("starts at the source size and leaves actual wrapping to the browser", () => {
+    const block = createBlock("A source heading", 100, 50);
+    const layout = getTranslatedBlockLayout(createMeasureContext(), "很长的译文标题需要浏览器实际换行", block,
+      [{ x: 100, y: 10, width: 50, height: 11.4 }], 2)!;
+    expect(layout.fontSize).toBeCloseTo(19.6);
+  });
+  it("retains centered headings and source paragraph leading", () => {
+    const block = createBlock("Heading", 100, 100);
+    const layout = getTranslatedBlockLayout(createMeasureContext(), "标题", block,
+      [{ x: 100, y: 10, width: 100, height: 11.4 }], 1, 300, 300)!;
+    expect(layout.textAlign).toBe("center");
+    const expanded = getTranslatedBlockLayout(createMeasureContext(), "长一些的中文标题需要扩宽原文框", block,
+      [{ x: 100, y: 10, width: 100, height: 11.4 }], 1, 300, 300)!;
+    expect(expanded.width).toBeGreaterThan(100);
+    expect(expanded.left + expanded.width / 2).toBe(150);
+    const left = findAvailableHorizontalLeft([
+      [{ x: 100, y: 10, width: 100, height: 11.4 }],
+      [{ x: 20, y: 10, width: 60, height: 11.4 }]
+    ], 0);
+    const adjacent = getTranslatedBlockLayout(createMeasureContext(), "长一些的中文标题需要扩宽原文框", block,
+      [{ x: 100, y: 10, width: 100, height: 11.4 }], 1, 300, 300, left)!;
+    expect(adjacent.left).toBeGreaterThanOrEqual(82);
+    block.lines.push({ ...block.lines[0], baselineY: 87 });
+    const paragraph = getTranslatedBlockLayout(createMeasureContext(), "分为两行的正文", block,
+      [{ x: 100, y: 10, width: 100, height: 24.4 }], 1)!;
+    expect(paragraph.textAlign).toBe("left");
+    expect(paragraph.lineHeight / paragraph.fontSize).toBeCloseTo(1.3);
+  });
+  it("does not center full-width prose or bullet items and retains hanging indentation", () => {
+    const block = createBlock("• A bullet item", 30, 240);
+    const layout = getTranslatedBlockLayout(createMeasureContext(), "• 项目正文", block,
+      [{ x: 30, y: 10, width: 240, height: 11.4 }], 1, 300, 300)!;
+    expect(layout.textAlign).toBe("left");
+    expect(layout.hangingIndent).toBe(10);
+    block.text = "An ordinary full-width sentence.";
+    const prose = getTranslatedBlockLayout(createMeasureContext(), "普通正文", block,
+      [{ x: 30, y: 10, width: 240, height: 11.4 }], 1, 300, 300)!;
+    expect(prose.textAlign).toBe("left");
+  });
+  it("keeps short translated units close to the source font size without clipping the line box", () => {
     const context = createMeasureContext();
     const block = createBlock("Hz", 402, 10);
     const rectangles = [{ x: 402, y: 100, width: 10, height: 11.4 }];
@@ -17,7 +71,8 @@ describe("PDF translated text layout", () => {
 
     expect(right).toBe(434);
     expect(layout.width).toBeGreaterThan(20);
-    expect(layout.fontSize).toBeCloseTo(9.4);
+    expect(layout.fontSize).toBeGreaterThan(8.5);
+    expect(layout.lineHeight).toBeLessThanOrEqual(layout.height);
   });
 
   it("does not expand translated text across the next cell", () => {

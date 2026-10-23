@@ -65,7 +65,7 @@ npm run build
 2. 选择源语言、目标语言和翻译服务。默认的 Google Web Translate 无需 API Key。
 3. 点击「翻译全文」开始双语阅读；再次点击即可显示原文。
 4. 如果只想翻译局部内容，开启「段落模式」，按住 `Ctrl` 点击段落。
-5. 当前标签页是在线或本地 PDF 时，主操作会变为「翻译 PDF」，打开双栏工作区并开始翻译。也可随时点击「打开 PDF」手动导入文件。
+5. 弹窗仅显示一个翻译按钮：网页显示「翻译全文」，在线或本地 PDF 显示「翻译PDF」。点击后分别翻译当前网页，或打开 PDF 双栏工作区并开始翻译。
 
 全文翻译也会读取图片中提供的长段替代文字（`alt`）。对于能可靠识别段落间隔的透明文字图片，会按段显示原图文字与对应译文，保留原有字形和页面背景；译文替换模式只显示译文。普通图片仍保留原图，在下方显示翻译后的说明。恢复原文时还原原图。这不需要 OCR；没有提供这类文字的图片仍需使用图片翻译。
 
@@ -95,7 +95,7 @@ npm run build
 | Microsoft Translator | API Key，可选区域 | Azure Translator REST API | 使用自己的 Azure Translator 资源 |
 | Google Cloud Translation | API Key | Translation Basic v2 | 使用自己的 Google Cloud 项目 |
 | OpenAI Compatible | 视服务而定 | `/chat/completions` | 可配置 Base URL、模型和系统提示词 |
-| DeepSeek | API Key | `/chat/completions` | 内置官方 API 预设，支持 V4 Flash / Pro |
+| DeepSeek | API Key | `/chat/completions` | 内置官方 API 预设，支持 `deepseek-flash` / `deepseek-v4-pro` |
 | Zhipu GLM | API Key | Chat Completions | 内置智谱 GLM 预设 |
 | Anthropic Compatible | 视服务而定 | `/messages` | 可作为自定义 LLM 服务添加 |
 | HTTP Template | 视接口而定 | GET / POST | 自定义 URL、请求头、请求体和响应路径 |
@@ -105,11 +105,13 @@ npm run build
 
 ### LLM 服务
 
-DeepSeek 内置预设使用官方 API，并默认关闭思考模式以减少翻译延迟。OpenAI Compatible 适用于 OpenAI、兼容 `/chat/completions` 的网关，以及其他采用相同请求格式的服务。Anthropic Compatible 支持 Messages API 格式。这些 LLM 服务都可以自定义 Base URL、API Key、模型与系统提示词。
+DeepSeek 内置预设使用官方 API，默认模型为 `deepseek-flash`，也可选择 `deepseek-v4-pro`，并默认关闭思考模式以减少翻译延迟。旧 Flash 模型配置会自动迁移为 `deepseek-flash`，模型名称以 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/) 为准。OpenAI Compatible 适用于 OpenAI、兼容 `/chat/completions` 的网关，以及其他采用相同请求格式的服务。Anthropic Compatible 支持 Messages API 格式。这些 LLM 服务都可以自定义 Base URL、API Key、模型与系统提示词。
 
 LLM 返回值应为与输入顺序一致的 JSON 字符串数组。只有一个输入项时，也兼容单个字符串结果。
 
-使用 Ollama 等本地 OpenAI 兼容服务时，Base URL 填写到 `/v1` 即可，例如 `http://[IPv6地址]:11434/v1`，扩展会追加 `/chat/completions`。如果 Ollama 返回 403，请按 [Ollama 官方说明](https://docs.ollama.com/faq#how-can-i-allow-additional-web-origins-to-access-ollama) 配置 `OLLAMA_ORIGINS`，允许当前扩展的来源。Windows 可执行 `setx OLLAMA_ORIGINS "chrome-extension://扩展ID"`，然后完全退出并重新启动 Ollama。扩展 ID 可在浏览器扩展管理页查看；需要允许所有 Chromium 扩展时可使用 `chrome-extension://*`。
+使用 Ollama 时，可填写 `http://[IPv6地址]:11434`、`http://[IPv6地址]:11434/v1` 或完整的 `/v1/chat/completions` 地址，扩展会补全接口并避免重复追加路径。IPv4、IPv6、主机名和自定义端口均支持。OpenAI Compatible 服务默认开启「Ollama 兼容」，处理扩展来源引起的 403，无需修改 `OLLAMA_ORIGINS` 或额外开启选项；旧配置升级后也默认开启，已手动关闭的设置会保留。
+
+兼容处理仅作用于 WuPage 自身发往当前接口的请求，保留 API Key 等请求头，并在请求结束后移除临时规则。如果开启后仍返回 403，请检查服务端认证或反向代理配置；也可按 [Ollama 官方说明](https://docs.ollama.com/faq#how-can-i-allow-additional-web-origins-to-access-ollama) 配置 `OLLAMA_ORIGINS`。Windows 例如执行 `setx OLLAMA_ORIGINS "chrome-extension://扩展ID"` 后完全退出并重启 Ollama。
 
 ### HTTP 模板
 
@@ -126,11 +128,13 @@ LLM 返回值应为与输入顺序一致的 JSON 字符串数组。只有一个�
 
 ## PDF 翻译
 
-WuPage 会将原始 PDF 与翻译结果渲染在同步、按页对齐的两栏中。可以从当前在线或本地 PDF 标签页点击「翻译 PDF」直接打开并翻译，也可以从扩展弹窗的「打开 PDF」进入工作区，再选择、拖放本地文件或粘贴 PDF 地址。
+WuPage 会将原始 PDF 与翻译结果渲染在同步、按页对齐的两栏中。从当前在线或本地 PDF 标签页点击扩展弹窗的「翻译PDF」，即可直接打开并翻译。进入工作区后，也可以选择、拖放其他本地文件或粘贴 PDF 地址。
 
-直接读取浏览器中已打开的本地 PDF（`file:///…`）需要在扩展详情中开启「允许访问文件网址」或「允许访问文件 URL」。未开启时，工作区提供设置入口；授权后可点击「重试打开」继续翻译。切换权限时浏览器可能重载扩展并关闭工作区，此时回到原 PDF 标签页再次点击「翻译 PDF」即可。不想开启该权限时，可直接选择或拖放这份 PDF 文件，无需收藏扩展内部地址。
+直接读取浏览器中已打开的本地 PDF（`file:///…`）需要在扩展详情中开启「允许访问文件网址」或「允许访问文件 URL」。未开启时，工作区提供设置入口；授权后可点击「重试打开」继续翻译。切换权限时浏览器可能重载扩展并关闭工作区，此时回到原 PDF 标签页再次点击「翻译PDF」即可。不想开启该权限时，可直接选择或拖放这份 PDF 文件，无需收藏扩展内部地址。
 
 译文文本块支持就地编辑、移动、缩放和删除。WuPage 会尽可能从 PDF 文本层重建文字颜色与位置，完成校对后可下载当前版本的译文 PDF。
+
+数学公式根据原 PDF 的数学字体、符号与位置识别后保留：独立公式和编号保持原位；行内公式随译文排版，保留上下标、分式及符号形状，不再交给翻译服务改写。显示和导出均使用原公式图像。若翻译服务改写、遗漏或重复公式标记，会自动规范化并重试受影响段落；仍不能保留时，仅翻译正文片段，再由扩展拼回原公式。只有公式校验通过的结果才会缓存，旧的不兼容缓存会自动避开。该识别依赖 PDF 文本层，并非所有文档都能准确识别。
 
 当前限制：
 
@@ -174,6 +178,8 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+复杂 PDF 的浏览器回归样本、执行方式和覆盖边界见 [PDF 排版回归](docs/pdf-regression.md)。
 
 ## 发布流程
 

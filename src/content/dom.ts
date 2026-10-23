@@ -30,6 +30,8 @@ interface TrackedGroup {
   insertionBefore?: ChildNode;
   insertionAfter?: ChildNode;
   preserveWhitespace?: boolean;
+  authoredLines?: boolean;
+  sourceHidden?: { hadClassAttribute: boolean };
 }
 
 interface TrackedAttribute {
@@ -310,6 +312,9 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
     // Never overwrite a new value supplied by the host application.
     if (tracked.replaced && tracked.node.data === "") tracked.node.data = tracked.sourceValue;
   }
+  for (const group of trackedGroups) {
+    if (stale.has(group.id)) restoreGroupedSource(group);
+  }
   for (const id of stale) {
     renderedById.get(id)?.remove();
     renderedById.delete(id);
@@ -490,7 +495,13 @@ export function renderTranslations(
     block.setAttribute(TRANSLATED_ATTR, "true");
     insertGroupedTranslation(group, element, displayMode);
     renderedById.set(group.id, element);
-    if (displayMode === "replace") replaceTrackedSource(group.nodes, group.id);
+    if (displayMode === "replace") {
+      replaceTrackedSource(group.nodes, group.id);
+      if (group.authoredLines) {
+        group.sourceHidden ??= { hadClassAttribute: group.block.hasAttribute("class") };
+        group.block.classList.add(REPLACED_SOURCE_CLASS);
+      }
+    }
   }
 
   for (const tracked of trackedNodes) {
@@ -808,7 +819,21 @@ function replaceTrackedSource(nodes: TrackedNode[], protectedTokenId?: string): 
   }
 }
 
+function restoreGroupedSource(group: TrackedGroup): void {
+  if (!group.sourceHidden) return;
+  group.block.classList.remove(REPLACED_SOURCE_CLASS);
+  if (!group.sourceHidden.hadClassAttribute && group.block.getAttribute("class") === "") {
+    group.block.removeAttribute("class");
+  }
+  group.sourceHidden = undefined;
+}
+
 function restoreReplacedSourcesIn(root: Element): void {
+  for (const group of trackedGroups) {
+    if (group.sourceHidden && (group.block === root || root.contains(group.block))) {
+      restoreGroupedSource(group);
+    }
+  }
   for (const tracked of trackedImageTexts) {
     if (tracked.image === root || root.contains(tracked.image)) restoreImageTextSource(tracked);
   }
@@ -1084,7 +1109,8 @@ function groupTextSegments(
       !block.matches(`summary, label, ${X_POST_TEXT_SELECTOR}`)
     ) continue;
     if (!text) continue;
-    trackedGroups.push({ id, nodes: groupNodes, block, mode: getRenderMode(block) });
+    const authoredLines = isAuthoredLineTextBlock(block);
+    trackedGroups.push({ id, nodes: groupNodes, block, mode: authoredLines ? "block" : getRenderMode(block), authoredLines });
     if (tokens.length) protectedTokensById.set(id, tokens);
     groupedSegments.push({ id, text, element: block });
     groupNodes.forEach((tracked) => standalone.delete(tracked.id));
@@ -1296,8 +1322,31 @@ function findGroupingBlock(element: Element | null): Element | null {
   }
   if (readableBlock) return readableBlock;
 
+  // Promotional pages often use a span with authored <br> lines as a whole
+  // paragraph. Treating its text runs as inline labels appends each translation
+  // to the same nowrap line and sends it into adjacent images or clipped cards.
+  let candidate: Element | null = element;
+  while (candidate && candidate !== document.body) {
+    if (isAuthoredLineTextBlock(candidate)) return candidate;
+    if (!candidate.matches("span,em,strong,b,i,u,small,mark,code,a,ruby,rt")) break;
+    candidate = candidate.parentElement;
+  }
+
   const listItem = element.closest("li");
   return listItem && !isStructuredListItem(listItem) ? listItem : null;
+}
+
+function isAuthoredLineTextBlock(element: Element): boolean {
+  if (!element.matches("span") || !element.querySelector("br")) return false;
+  if (element.closest("a,button,nav,[role='navigation'],[role='button'],[role='tab']")) return false;
+  if (element.querySelector("div,p,ul,ol,table,img,picture,video,iframe,input,textarea,select,button,[contenteditable]")) return false;
+  if (normalizeText(element.textContent ?? "").length < 24) return false;
+  if (/^(?:inline-)?(?:flex|grid)$/u.test(window.getComputedStyle(element).display)) return false;
+  // Keep a translation inside its existing layout cell rather than creating
+  // an extra flex/grid item next to the source.
+  if (element.parentElement && /^(?:inline-)?(?:flex|grid)$/u.test(window.getComputedStyle(element.parentElement).display)) return false;
+  const lines = element.innerHTML.split(/<br\b[^>]*>/iu).filter((line) => line.replace(/<[^>]*>/gu, "").trim());
+  return lines.length >= 2;
 }
 
 /**
@@ -1586,6 +1635,11 @@ function insertGroupedTranslation(
   displayMode: TranslationDisplayMode = "bilingual"
 ): void {
   const { block, insertionBefore, insertionAfter, mode } = group;
+  if (group.authoredLines) {
+    translation.setAttribute("data-wupage-container", "authored-lines");
+    block.after(translation);
+    return;
+  }
   if (insertionAfter?.parentNode) {
     if (block.matches(YOUTUBE_DESCRIPTION_SELECTOR)) {
       translation.setAttribute("data-wupage-container", "youtube-description");

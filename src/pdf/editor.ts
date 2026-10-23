@@ -1,3 +1,5 @@
+import { readFormulaText, renderFormulaText, type PdfFormulaImage } from "./math-rendering";
+
 export interface TranslationBlockGeometry {
   left: number;
   top: number;
@@ -13,6 +15,11 @@ export interface EditableTranslationBlockOptions extends TranslationBlockGeometr
   fontSize: number;
   fontWeight: number;
   lineHeight: number;
+  textAlign?: "left" | "center";
+  hangingIndent?: number;
+  fontSizeStep?: number;
+  maximumAutoHeight?: number;
+  formulaImages?: PdfFormulaImage[];
   onDelete?: () => void;
   onTextChange?: (text: string) => void;
 }
@@ -25,6 +32,7 @@ export function createEditableTranslationBlock(
   block.className = "translation-block";
   block.dataset.blockId = options.id;
   block.dataset.testid = "pdf-translation-block";
+  block.dataset.preferredFontSize = String(options.fontSize);
   setGeometry(block, options);
 
   const text = document.createElement("div");
@@ -39,8 +47,14 @@ export function createEditableTranslationBlock(
   text.style.fontSize = `${options.fontSize}px`;
   text.style.fontWeight = String(options.fontWeight);
   text.style.lineHeight = `${options.lineHeight}px`;
-  text.textContent = options.text;
-  text.addEventListener("input", () => options.onTextChange?.(text.textContent ?? ""));
+  text.style.textAlign = options.textAlign ?? "left";
+  if (options.hangingIndent) {
+    text.style.paddingLeft = `${options.hangingIndent}px`;
+    text.style.textIndent = `${-options.hangingIndent}px`;
+  }
+  if (options.formulaImages?.length) renderFormulaText(text, options.text, options.formulaImages, options.fontSize);
+  else text.textContent = options.text;
+  text.addEventListener("input", () => options.onTextChange?.(readFormulaText(text)));
 
   const moveHandle = createControl("translation-block-move", "移动译文块", "✥");
   bindPointerGesture(moveHandle, block, layer, "move");
@@ -54,14 +68,110 @@ export function createEditableTranslationBlock(
   const resizeHandle = createControl("translation-block-resize", "调整译文块大小", "");
   bindPointerGesture(resizeHandle, block, layer, "resize");
 
-  block.append(text, moveHandle, deleteButton, resizeHandle);
+  const decreaseButton = createControl("translation-block-font-decrease", "减小字号", "−");
+  const increaseButton = createControl("translation-block-font-increase", "增大字号", "+");
+  for (const [button, direction] of [[decreaseButton, -1], [increaseButton, 1]] as const) {
+    button.addEventListener("click", () => {
+      const size = numericStyle(text.style.fontSize);
+      const minimum = Number(layer.dataset.coordinateScale) || 1;
+      setTranslationFontSize(block, Math.max(minimum, size + direction * (options.fontSizeStep ?? 1)));
+      if (direction > 0) growTranslationBlock(block, layer, options.maximumAutoHeight);
+    });
+  }
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "translation-block-toolbar";
+  toolbar.setAttribute("role", "toolbar");
+  toolbar.setAttribute("aria-label", "译文块工具");
+  toolbar.append(moveHandle, decreaseButton, increaseButton, deleteButton);
+  block.append(text, toolbar, resizeHandle);
   return block;
+}
+
+export function fitTranslationBlock(block: HTMLElement): void {
+  const text = block.querySelector<HTMLElement>(".translation-block-text");
+  if (!text || !text.clientWidth || !text.clientHeight) return;
+  const initialSize = numericStyle(text.style.fontSize);
+  const coordinateScale = Number(block.parentElement?.dataset.coordinateScale) || 1;
+  delete block.dataset.layoutOverflow;
+  const range = document.createRange();
+  const fits = (size: number): boolean => {
+    setTranslationFontSize(block, size);
+    text.style.paddingTop = "0px";
+    const bounds = text.getBoundingClientRect();
+    const scale = bounds.width / text.clientWidth;
+    if (!scale) return true;
+    range.selectNodeContents(text);
+    const content = range.getBoundingClientRect();
+    // Tall superscripts/formulas can extend above the first CSS line box.
+    const measuredInset = Math.max(0, (bounds.top - content.top) / scale);
+    // Empty/stale range rectangles do not describe a font overhang. In
+    // particular, their zero origin must not become a page-sized top inset.
+    const inset = content.width > 0 && content.height > 0 && measuredInset <= size * 2 ? measuredInset : 0;
+    if (inset) text.style.paddingTop = `${inset}px`;
+    return text.scrollHeight <= text.clientHeight + 1 && text.scrollWidth <= text.clientWidth + 1;
+  };
+  if (fits(initialSize)) return;
+  // A single extra wrapped line does not mean the font should be halved.
+  // Find the largest size that fits, including the browser's font metrics.
+  let low = Math.min(coordinateScale, initialSize);
+  let high = initialSize;
+  if (!fits(low)) {
+    // There is no valid lower bound: committing it leaves a 1px line box
+    // around a larger glyph (or bad inset) and can make all text disappear.
+    fits(initialSize);
+    block.dataset.layoutOverflow = "true";
+    return;
+  }
+  for (let attempt = 0; attempt < 12 && high - low > 0.02 * coordinateScale; attempt += 1) {
+    const middle = (low + high) / 2;
+    if (fits(middle)) low = middle;
+    else high = middle;
+  }
+  fits(low);
+}
+
+export function setTranslationFontSize(block: HTMLElement, size: number): void {
+  const text = block.querySelector<HTMLElement>(".translation-block-text");
+  const current = numericStyle(text?.style.fontSize ?? "");
+  if (!text || !current || !Number.isFinite(size) || size <= 0) return;
+  const ratio = size / current;
+  text.style.fontSize = `${size}px`;
+  text.style.lineHeight = `${numericStyle(text.style.lineHeight) * ratio}px`;
+  text.style.paddingTop = `${numericStyle(text.style.paddingTop) * ratio}px`;
+  text.style.paddingLeft = `${numericStyle(text.style.paddingLeft) * ratio}px`;
+  text.style.textIndent = `${numericStyle(text.style.textIndent) * ratio}px`;
+  for (const image of text.querySelectorAll<HTMLElement>(".pdf-inline-formula")) {
+    image.style.width = `${numericStyle(image.style.width) * ratio}px`;
+    image.style.height = `${numericStyle(image.style.height) * ratio}px`;
+    image.style.verticalAlign = `${numericStyle(image.style.verticalAlign) * ratio}px`;
+  }
+}
+
+function growTranslationBlock(block: HTMLElement, layer: HTMLElement, maximumHeight?: number): void {
+  const text = block.querySelector<HTMLElement>(".translation-block-text");
+  if (!text) return;
+  const left = numericStyle(block.style.left);
+  const right = left + numericStyle(block.style.width);
+  const top = numericStyle(block.style.top);
+  const height = numericStyle(block.style.height);
+  let bottom = numericStyle(layer.style.height) || layer.clientHeight;
+  if (maximumHeight !== undefined) bottom = Math.min(bottom, top + maximumHeight);
+  for (const other of layer.querySelectorAll<HTMLElement>(".translation-block")) {
+    if (other === block) continue;
+    const otherLeft = numericStyle(other.style.left);
+    const otherTop = numericStyle(other.style.top);
+    if (otherTop >= top + height && otherLeft < right && otherLeft + numericStyle(other.style.width) > left) {
+      bottom = Math.min(bottom, otherTop - 1);
+    }
+  }
+  block.style.height = `${Math.max(height, Math.min(text.scrollHeight, bottom - top))}px`;
 }
 
 function createControl(className: string, label: string, glyph: string): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = className;
+  button.className = `translation-block-control ${className}`;
   button.setAttribute("aria-label", label);
   button.title = label;
   button.textContent = glyph;

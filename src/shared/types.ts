@@ -41,6 +41,8 @@ export interface OpenAICompatibleConfig extends ProviderBaseConfig {
   apiKey: string;
   model: string;
   systemPrompt: string;
+  /** Enabled by default, including for settings saved before this option existed. */
+  ollamaCompatibility?: boolean;
 }
 
 export interface AnthropicCompatibleConfig extends ProviderBaseConfig {
@@ -102,6 +104,8 @@ export interface ExtensionSettings {
 
 export interface TranslateBatchRequest {
   texts: string[];
+  /** Verify protected PDF formula markers before caching a translation. */
+  preservePlaceholders?: boolean;
   context?: string;
   sourceLang?: string;
   targetLang: string;

@@ -97,7 +97,17 @@ describe("options provider controls", () => {
     });
     expect(query<HTMLInputElement>("[data-field='baseURL']").value)
       .toBe("https://api.deepseek.com");
-    expect(query<HTMLSelectElement>("[data-field='model']").value).toBe("deepseek-v4-flash");
+    expect(query<HTMLSelectElement>("[data-field='model']").value).toBe("deepseek-flash");
+    expect(Array.from(query<HTMLSelectElement>("[data-field='model']").options, (option) => option.value))
+      .toEqual(["deepseek-flash", "deepseek-v4-pro"]);
+    for (const model of ["deepseek-v4-pro", "deepseek-flash"]) {
+      query<HTMLSelectElement>("[data-field='model']").value = model;
+      click("#save");
+      await vi.waitFor(() => {
+        expect(stored.providers.find((entry) => entry.id === "deepseek"))
+          .toMatchObject({ model });
+      });
+    }
     click("#providerTrigger");
     click("[data-action='select'][data-provider-id='google-web-translate']");
     await vi.waitFor(() => {
@@ -136,6 +146,20 @@ describe("options provider controls", () => {
       expect(stored.providers).toHaveLength(7);
       expect(document.querySelectorAll(".provider-delete")).toHaveLength(0);
     });
+
+    click("#providerTrigger");
+    click("[data-action='select'][data-provider-id='openai-compatible']");
+    await vi.waitFor(() => expect(document.querySelector("#providerTriggerLabel")?.textContent).toBe("OpenAI Compatible"));
+    expect(query<HTMLSelectElement>("[data-field='ollamaCompatibility']").value).toBe("enabled");
+    for (const value of ["disabled", "enabled"]) {
+      query<HTMLSelectElement>("[data-field='ollamaCompatibility']").value = value;
+      click("#save");
+      await vi.waitFor(() => {
+        const provider = stored.providers.find((entry) => entry.id === "openai-compatible");
+        expect(provider?.type === "openai-compatible" && provider.ollamaCompatibility)
+          .toBe(value === "enabled");
+      });
+    }
   });
 });
 

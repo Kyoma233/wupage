@@ -10,6 +10,8 @@ import type {
   TranslationDebugTask
 } from "../shared/types";
 import { createProvider } from "./providers";
+import { normalizeProtectedText } from "../shared/protected-text";
+import { translateProtectedText } from "./protected-translation";
 
 const providerLimiters = new Map<string, ProviderLimiter>();
 const debugTasks: TranslationDebugTask[] = [];
@@ -30,16 +32,20 @@ export async function translateWithSettings(
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
   const cacheProviderId = settings.cacheEnabled
-    ? `${providerId}.${await sha256(JSON.stringify({ version: 2, provider: providerConfig, sourceLang: request.sourceLang ?? "auto" }))}`
+    ? `${providerId}.${await sha256(JSON.stringify({ version: 2, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
+      ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
     : providerId;
   const cachedTranslations = new Map<number, string>();
   const uncachedTexts: string[] = [];
   const uncachedIndexes: number[] = [];
 
   for (const [index, text] of request.texts.entries()) {
-    const cached = settings.cacheEnabled
+    const stored = settings.cacheEnabled
       ? await readCachedTranslation(cacheProviderId, request.targetLang, text, request.context)
       : undefined;
+    const cached = stored !== undefined && request.preservePlaceholders
+      ? normalizeProtectedText(text, stored)
+      : stored;
     if (cached !== undefined) {
       cachedTranslations.set(index, cached);
     } else {
@@ -327,6 +333,11 @@ async function translateProviderTexts(
   request: TranslateBatchRequest,
   texts: string[]
 ): Promise<string[]> {
+  if (request.preservePlaceholders) {
+    return translateProtectedText({ ...request, texts }, (part) =>
+      translateProviderTexts(providerConfig, provider, { ...part, preservePlaceholders: false }, part.texts)
+    );
+  }
   if (isLlmProvider(providerConfig) || !request.context || !texts.length) {
     return provider.translateBatch({ ...request, texts });
   }

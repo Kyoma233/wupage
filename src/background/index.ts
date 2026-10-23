@@ -6,8 +6,10 @@ import { clearTranslationCache, getTranslationDebugSnapshot, translateWithSettin
 import { requestOcr } from "./ocr";
 import { installedRevision } from "../ocr/model-store";
 import { initImageContextMenu } from "./image-context-menu";
+import { initializeOllamaCompatibility } from "./ollama-compatibility";
 
 initImageContextMenu();
+void initializeOllamaCompatibility().catch((error: unknown) => console.warn("WuPage Ollama compatibility:", error));
 
 chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResponse) => {
   if ("target" in request) return;

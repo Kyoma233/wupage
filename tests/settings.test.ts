@@ -97,6 +97,27 @@ describe("normalizeSettings", () => {
       .toBeUndefined();
   });
 
+  it.each([
+    ["deepseek-v4-flash", "deepseek-flash"],
+    ["deepseek-v4-flash-vision-exp", "deepseek-flash"],
+    ["deepseek-flash", "deepseek-flash"],
+    ["deepseek-v4-pro", "deepseek-v4-pro"],
+    ["custom-model", "custom-model"]
+  ])("normalizes saved DeepSeek model %s to %s", (model, expectedModel) => {
+    const saved = normalizeSettings(undefined).providers.find((provider) => provider.type === "deepseek")!;
+    const settings = normalizeSettings({
+      activeProviderId: saved.id,
+      providers: [{ ...saved, model, apiKey: "saved-key", baseURL: "https://example.com/v1" }]
+    });
+
+    expect(settings.activeProviderId).toBe(saved.id);
+    expect(settings.providers.find((provider) => provider.id === saved.id)).toMatchObject({
+      model: expectedModel,
+      apiKey: "saved-key",
+      baseURL: "https://example.com/v1"
+    });
+  });
+
   it("preserves custom providers and falls back when the active provider is disabled", () => {
     const settings = normalizeSettings({
       activeProviderId: "openai-compatible",
@@ -139,5 +160,13 @@ describe("normalizeSettings", () => {
 
     expect(settings.providers.filter((provider) => provider.enabled !== false)).toHaveLength(1);
     expect(settings.activeProviderId).toBe("google-web-translate");
+  });
+
+  it.each([true, false, undefined, "true"])("defaults Ollama compatibility on and preserves explicit opt-out: %s", (value) => {
+    const saved = normalizeSettings(undefined).providers.find((provider) => provider.type === "openai-compatible")!;
+    const settings = normalizeSettings({ providers: [{ ...saved, ollamaCompatibility: value }] });
+    const provider = settings.providers.find((entry) => entry.type === "openai-compatible");
+    expect(provider?.type === "openai-compatible" && provider.ollamaCompatibility)
+      .toBe(value !== false);
   });
 });

@@ -336,6 +336,58 @@ describe("LLM provider queue", () => {
     })).resolves.toMatchObject({ translations: ["译文：First paragraph", "译文：Second paragraph"] });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("avoids legacy PDF caches and revalidates protected cache entries before reuse", async () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+      set: vi.fn(async (items: Record<string, string>) => {
+        Object.entries(items).forEach(([key, value]) => stored.set(key, value));
+      })
+    } } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '["旧的损坏译文"]' } }] }) })
+      .mockImplementation(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '["设 《wupage 0》 为常数。"]' } }] }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const settings = createLlmSettings("pdf-cache-validation", 1);
+    settings.cacheEnabled = true;
+    const source = { texts: ["Let ⟪WUPAGE0⟫ be fixed."], targetLang: "zh-CN" };
+    await translateWithSettings(settings, source);
+    const legacyKey = [...stored.keys()][0];
+    const protectedRequest = { ...source, preservePlaceholders: true };
+    expect(await translateWithSettings(settings, protectedRequest)).toEqual({ translations: ["设 ⟪WUPAGE0⟫ 为常数。"], cached: 0 });
+    const protectedKey = [...stored.keys()].find((key) => key !== legacyKey)!;
+    expect(stored.get(protectedKey)).toBe("设 ⟪WUPAGE0⟫ 为常数。");
+    expect((await translateWithSettings(settings, protectedRequest)).cached).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    stored.set(protectedKey, "标记丢失的缓存");
+    expect((await translateWithSettings(settings, protectedRequest)).cached).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(stored.get(protectedKey)).toBe("设 ⟪WUPAGE0⟫ 为常数。");
+  });
+
+  it("caches only the locally repaired result after persistent marker loss", async () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+      set: vi.fn(async (items: Record<string, string>) => { Object.entries(items).forEach(([key, value]) => stored.set(key, value)); })
+    } } });
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const { texts } = JSON.parse(JSON.parse(String(init.body)).messages[1].content) as { texts: string[] };
+      const translations = texts.map((text) => text.includes("WUPAGE") ? "持续缺少公式的译文" : `译文：${text}`);
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(translations) } }] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const settings = createLlmSettings("pdf-cache-recovery", 1);
+    settings.cacheEnabled = true;
+    const request = { texts: ["Let ⟪WUPAGE0⟫ be fixed."], targetLang: "zh-CN", preservePlaceholders: true };
+    const first = await translateWithSettings(settings, request);
+    expect(first.translations).toEqual(["译文：Let ⟪WUPAGE0⟫ 译文：be fixed."]);
+    expect([...stored.values()]).toEqual(first.translations);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((await translateWithSettings(settings, request)).cached).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
 
 function createLlmSettings(

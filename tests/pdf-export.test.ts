@@ -3,6 +3,7 @@
 import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { createEditableTranslationBlock } from "../src/pdf/editor";
 import {
   buildRasterPdf,
   paintTranslationLayer,
@@ -15,6 +16,58 @@ afterEach(() => {
 });
 
 describe("translated PDF export", () => {
+  it("converts minimum-font-safe text coordinates back to PDF canvas coordinates", () => {
+    const layer = document.createElement("div");
+    layer.dataset.coordinateScale = "12";
+    layer.innerHTML = '<div class="translation-block" style="left:120px;top:240px;width:1200px;height:480px"><div class="translation-block-text" style="font-size:240px;line-height:288px">文字</div></div>';
+    const context = {
+      save: vi.fn(), restore: vi.fn(), scale: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      fillText: vi.fn(), measureText: () => ({ width: 240 })
+    } as unknown as CanvasRenderingContext2D;
+    paintTranslationLayer(context, layer);
+    expect(context.scale).toHaveBeenCalledWith(1 / 12, 1 / 12);
+    expect(context.font).toBe("400 240px sans-serif");
+    expect(context.rect).toHaveBeenCalledWith(120, 240, 1200, 480);
+  });
+  it("exports the font size chosen with the toolbar, not its initial size", () => {
+    const layer = document.createElement("div");
+    const block = createEditableTranslationBlock(layer, {
+      id: "font-export", text: "人工调大字号", color: "#222", fontFamily: "Arial", fontSize: 20,
+      fontSizeStep: 2, fontWeight: 400, lineHeight: 24, left: 10, top: 20, width: 300, height: 80
+    });
+    layer.append(block);
+    block.querySelector<HTMLButtonElement>('[aria-label="增大字号"]')!.click();
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillText: vi.fn(),
+      measureText: () => ({ width: 10 })
+    } as unknown as CanvasRenderingContext2D;
+    paintTranslationLayer(context, layer);
+    expect(context.font).toBe("400 22px Arial");
+    expect(context.fillText).toHaveBeenCalledWith("人工调大字号", 10, expect.any(Number));
+  });
+  it("uses browser line positions for ordinary prose, matching the editable preview", () => {
+    const layer = document.createElement("div");
+    layer.style.width = "100px";
+    layer.innerHTML = '<div class="translation-block" style="left: 20px; top: 30px; width: 80px; height: 50px"><div class="translation-block-text" style="font-size: 12px">ab cd</div></div>';
+    const text = layer.querySelector<HTMLElement>(".translation-block-text")!;
+    vi.spyOn(layer, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 100 } as DOMRect);
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ width: 80 } as DOMRect);
+    let offset = 0;
+    vi.spyOn(document, "createRange").mockReturnValue({
+      setStart: (_node: Node, index: number) => { offset = index; }, setEnd: vi.fn(),
+      getBoundingClientRect: () => ({ left: 20 + (offset < 3 ? offset : offset - 3) * 8, bottom: offset < 3 ? 44 : 60, width: offset === 2 ? 0 : 8 })
+    } as unknown as Range);
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillText: vi.fn(),
+      measureText: () => ({ width: 8, fontBoundingBoxDescent: 3 })
+    } as unknown as CanvasRenderingContext2D;
+    paintTranslationLayer(context, layer);
+    expect(context.fillText).toHaveBeenCalledWith("a", 20, 41);
+    expect(context.fillText).toHaveBeenCalledWith("c", 20, 57);
+    expect(context.fillText).toHaveBeenCalledWith("d", 28, 57);
+    vi.restoreAllMocks();
+  });
+
   it("packages rasterized pages using their original PDF dimensions", async () => {
     const onePixelPng = new Uint8Array(Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",

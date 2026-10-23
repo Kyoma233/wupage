@@ -180,7 +180,7 @@ describe("DeepSeekProvider", () => {
       label: "DeepSeek",
       baseURL: "https://api.deepseek.com",
       apiKey: "secret",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       systemPrompt: "Translate to {{targetLang}}"
     });
 
@@ -198,7 +198,7 @@ describe("DeepSeekProvider", () => {
       messages: Array<{ content: string }>;
     } & Record<string, unknown>;
     expect(body).toMatchObject({
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       temperature: 0,
       thinking: { type: "disabled" }
     });
@@ -221,7 +221,7 @@ describe("DeepSeekProvider", () => {
       label: "DeepSeek",
       baseURL: "https://api.deepseek.com",
       apiKey: "",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       systemPrompt: "Translate to {{targetLang}}"
     });
 

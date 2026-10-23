@@ -1,5 +1,6 @@
 import {
   GlobalWorkerOptions,
+  OPS,
   TextLayer,
   getDocument,
   type PDFDocumentProxy,
@@ -20,7 +21,7 @@ import {
   type ForegroundColorSample,
   type RgbColor
 } from "./colors";
-import { createEditableTranslationBlock } from "./editor";
+import { createEditableTranslationBlock, fitTranslationBlock } from "./editor";
 import {
   buildRasterPdf,
   canvasToJpegBytes,
@@ -29,10 +30,13 @@ import {
   translatedPdfFileName,
   type RasterPdfPage
 } from "./export";
-import { findAvailableHorizontalRight, getTranslatedBlockLayout } from "./layout";
+import { findAvailableHorizontalLeft, findAvailableHorizontalRight, findAvailableVerticalBottom, getTranslatedBlockLayout } from "./layout";
 import { getExtensionDetailsUrl, getPdfLaunchOptions, openPdfWorkspaceInNewTab } from "./launch";
-import { extractTextBlocks, type PdfTextBlock } from "./model";
+import { extractTextBlocks, normalizePdfTextItems, type PdfTextBlock } from "./model";
 import { renderPageWithoutText } from "./rendering";
+import { filterVisiblePdfText } from "./visibility";
+import { validatePdfMathTranslation } from "./math";
+import { createFormulaImages, getFormulaViewportRect } from "./math-rendering";
 import "./styles.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -241,6 +245,8 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
   fileAccessNotice.hidden = true;
   showLoading("正在打开 PDF", "正在读取文档结构…");
   translationRun += 1;
+  translateButton.classList.remove("is-loading");
+  translateButton.disabled = true;
   pageStates.forEach((page) => {
     page.originalTextLayerObserver?.disconnect();
     page.translationLayerObserver?.disconnect();
@@ -265,6 +271,7 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
     throw error;
   }
   pdfDocument = documentProxy;
+  const optionalContent = await documentProxy.getOptionalContentConfig?.({ intent: "display" });
   currentDocumentName = cleanFileName(name);
   documentName.textContent = currentDocumentName;
   documentMeta.textContent = `${documentProxy.numPages} 页`;
@@ -283,21 +290,36 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
       parseCursor += 1;
       const page = await documentProxy.getPage(pageNumber);
       const textContent = await page.getTextContent();
-      const textItems = textContent.items.flatMap((item) => {
+      // The fallback CSS family hides the distinction between prose and math
+      // fonts. Load the real font metadata before identifying formula runs.
+      const operators = await page.getOperatorList?.();
+      const visibleItems = filterVisiblePdfText(textContent.items, operators, OPS, optionalContent);
+      const fonts = new Map(Object.keys(textContent.styles).flatMap((name) =>
+        page.commonObjs?.has(name) ? [[name, page.commonObjs.get(name)] as const] : []
+      ));
+      const measureContext = fonts.size ? document.createElement("canvas").getContext("2d") : null;
+      const textItems = visibleItems.flatMap((item) => {
         if (!("str" in item)) return [];
         const fontFamily = textContent.styles[item.fontName]?.fontFamily || "Arial, sans-serif";
         return [{
           ...item,
           fontFamily,
-          fontWeight: /bold|black|heavy|semibold|demi/iu.test(`${item.fontName} ${fontFamily}`)
+          fontName: fonts.get(item.fontName)?.name ?? item.fontName,
+          fontFace: item.fontName,
+          fontAscent: textContent.styles[item.fontName]?.ascent,
+          fontDescent: textContent.styles[item.fontName]?.descent,
+          fontWeight: /bold|black|heavy|semibold|demi|CMBX|(?:NimbusRomNo9L|TimesNewRomanPS)-Medi/iu.test(`${fonts.get(item.fontName)?.name ?? item.fontName} ${fontFamily}`)
             ? 700
             : 400
         }];
       });
       parsedPages[pageNumber - 1] = {
         page,
-        blocks: extractTextBlocks(textItems, pageNumber),
-        textContent
+        blocks: extractTextBlocks(normalizePdfTextItems(textItems, page.getViewport({ scale: 1 })), pageNumber, measureContext ? (item, text) => {
+          measureContext.font = `${item.height || Math.abs(Number(item.transform[3])) || 10}px "${item.fontFace}"`;
+          return measureContext.measureText(text);
+        } : undefined),
+        textContent: { ...textContent, items: visibleItems }
       };
       parsedCount += 1;
       loadingDetail.textContent = `正在解析第 ${parsedCount} / ${documentProxy.numPages} 页`;
@@ -375,10 +397,13 @@ function createPageState(
   const translationLayer = document.createElement("div");
   translationLayer.className = "translation-text-layer";
   translationLayer.setAttribute("aria-label", `第 ${pageNumber} 页可编辑译文`);
+  const translationViewport = document.createElement("div");
+  translationViewport.className = "translation-layer-viewport";
+  translationViewport.append(translationLayer);
   const prompt = document.createElement("p");
   prompt.className = "translation-prompt";
   prompt.textContent = blocks.length ? "等待翻译" : "此页未检测到可翻译文字";
-  translatedCanvasShell.append(translatedCanvas, translationLayer, prompt);
+  translatedCanvasShell.append(translatedCanvas, translationViewport, prompt);
   translatedPanel.append(translatedCanvasShell);
 
   row.append(originalPanel, translatedPanel);
@@ -477,9 +502,14 @@ function syncOriginalTextLayer(pageState: PdfPageState, internalWidth: number): 
 }
 
 function renderTranslatedPdfPage(pageState: PdfPageState): void {
-  const viewport = pageState.renderViewport;
+  const renderViewport = pageState.renderViewport;
   const translations = pageState.translations;
-  if (!viewport || !translations) return;
+  if (!renderViewport || !translations) return;
+  const scale = renderViewport.width / pageState.pdfWidth;
+  const viewport = {
+    scale,
+    convertToViewportPoint: (x: number, y: number): number[] => [x * scale, (pageState.pdfHeight - y) * scale]
+  };
 
   const target = pageState.translatedCanvas;
   target.width = pageState.canvas.width;
@@ -491,10 +521,20 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
   context.drawImage(pageState.translatedBaseCanvas, 0, 0);
 
   const originalContext = pageState.canvas.getContext("2d", { alpha: false });
+  // PDF.js already measures the browser's enforced minimum font size. Use
+  // enlarged text coordinates and an inverse layer transform, as its original
+  // text layer does, so small PDF text remains editable at its intended size.
+  const coordinateScale = Math.max(1, Number.parseFloat(pageState.originalTextLayer.style.getPropertyValue("--min-font-size")) || 1);
+  pageState.translationLayer.dataset.coordinateScale = String(coordinateScale);
+  pageState.translatedCanvasShell.className = "canvas-shell translation-canvas-shell is-rendered";
+  syncTranslationLayer(pageState);
 
   const layouts = pageState.blocks.map((block) => ({
     block,
-    lineRects: block.lines.map((line) => getViewportLineRect(line, viewport))
+    lineRects: [
+      ...block.lines.map((line) => getViewportLineRect(line, viewport)),
+      ...(block.formulas ?? []).map((formula) => getFormulaViewportRect(formula, viewport))
+    ]
   }));
   const rectangleGroups = layouts.map((layout) => layout.lineRects);
   const backgrounds = layouts.map((layout) => layout.lineRects.map((rectangle) =>
@@ -504,8 +544,27 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
     ? sampleTextColor(originalContext, layout.lineRects, backgrounds[index])
     : "#202826"
   );
+  // Fraction bars and some symbol outlines are vector paths, so suppressing
+  // fillText alone leaves them behind at the formula's old inline position.
+  for (const formula of pageState.blocks.flatMap((block) => block.formulas ?? [])) {
+    const rect = getFormulaViewportRect(formula, viewport);
+    context.fillStyle = toCssRgb(originalContext ? sampleBackgroundColor(originalContext, rect) : [255, 255, 255]);
+    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+  }
   pageState.translationLayer.replaceChildren();
   layouts.forEach((layout, index) => {
+    if (!layout.block.translatable) {
+      // Copy original glyphs, including scripts and equation numbers. Replacing
+      // them with ordinary canvas text would lose the PDF's math typography.
+      for (const rect of layout.lineRects) {
+        const x = Math.max(0, Math.floor(rect.x));
+        const y = Math.max(0, Math.floor(rect.y));
+        const width = Math.min(target.width - x, Math.ceil(rect.x + rect.width) - x);
+        const height = Math.min(target.height - y, Math.ceil(rect.y + rect.height) - y);
+        if (width > 0 && height > 0) context.drawImage(pageState.canvas, x, y, width, height, x, y, width, height);
+      }
+      return;
+    }
     const text = translations[index] ?? layout.block.text;
     const blockLayout = getTranslatedBlockLayout(
       context,
@@ -513,7 +572,9 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
       layout.block,
       layout.lineRects,
       viewport.scale,
-      findAvailableHorizontalRight(rectangleGroups, index, target.width)
+      findAvailableHorizontalRight(rectangleGroups, index, target.width),
+      target.width,
+      findAvailableHorizontalLeft(rectangleGroups, index)
     );
     if (!blockLayout || !text.trim()) return;
     const editableBlock = createEditableTranslationBlock(pageState.translationLayer, {
@@ -521,13 +582,18 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
       text,
       color: colors[index],
       fontFamily: blockLayout.fontFamily,
-      fontSize: blockLayout.fontSize,
+      fontSize: blockLayout.fontSize * coordinateScale,
       fontWeight: layout.block.fontWeight,
-      lineHeight: blockLayout.lineHeight,
-      left: blockLayout.left,
-      top: blockLayout.top,
-      width: blockLayout.width,
-      height: blockLayout.height,
+      lineHeight: blockLayout.lineHeight * coordinateScale,
+      textAlign: blockLayout.textAlign,
+      hangingIndent: blockLayout.hangingIndent * coordinateScale,
+      fontSizeStep: viewport.scale * coordinateScale,
+      maximumAutoHeight: (findAvailableVerticalBottom(rectangleGroups, index, target.height) - blockLayout.top) * coordinateScale,
+      formulaImages: createFormulaImages(layout.block.formulas ?? [], pageState.canvas, viewport),
+      left: blockLayout.left * coordinateScale,
+      top: blockLayout.top * coordinateScale,
+      width: blockLayout.width * coordinateScale,
+      height: blockLayout.height * coordinateScale,
       onTextChange: (value) => {
         translations[index] = value;
         updateDownloadButtonState();
@@ -538,6 +604,7 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
       }
     });
     pageState.translationLayer.append(editableBlock);
+    fitTranslationBlock(editableBlock);
   });
   syncTranslationLayer(pageState);
   if (!pageState.translationLayerObserver) {
@@ -551,7 +618,7 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
 
 function getViewportLineRect(
   line: PdfTextBlock["lines"][number],
-  viewport: ReturnType<PDFPageProxy["getViewport"]>
+  viewport: Pick<ReturnType<PDFPageProxy["getViewport"]>, "convertToViewportPoint">
 ): { x: number; y: number; width: number; height: number } {
   const start = viewport.convertToViewportPoint(
     line.x,
@@ -636,8 +703,9 @@ function sampleBackgroundColor(
 }
 
 function syncTranslationLayer(pageState: PdfPageState): void {
-  const internalWidth = pageState.translatedCanvas.width;
-  const internalHeight = pageState.translatedCanvas.height;
+  const coordinateScale = Number(pageState.translationLayer.dataset.coordinateScale) || 1;
+  const internalWidth = pageState.translatedCanvas.width * coordinateScale;
+  const internalHeight = pageState.translatedCanvas.height * coordinateScale;
   if (!internalWidth || !internalHeight) return;
   const displayedWidth = pageState.translatedCanvasShell.clientWidth
     || Number.parseFloat(pageState.translatedCanvas.style.width)
@@ -650,13 +718,23 @@ function syncTranslationLayer(pageState: PdfPageState): void {
 }
 
 async function translateDocument(): Promise<void> {
-  if (!pdfDocument || !pageStates.length) return;
-  await saveReaderSettings();
+  if (!pdfDocument || !pageStates.length || translateButton.classList.contains("is-loading")) return;
   const runId = ++translationRun;
   translateButton.disabled = true;
   downloadButton.disabled = true;
   translateButton.classList.add("is-loading");
   progressBar.style.width = "0%";
+  try {
+    await saveReaderSettings();
+  } catch (error) {
+    if (runId !== translationRun) return;
+    translateButton.disabled = false;
+    translateButton.classList.remove("is-loading");
+    updateDownloadButtonState();
+    showStatus(`无法开始翻译：${formatTranslationError(error)}`, "error");
+    return;
+  }
+  if (runId !== translationRun) return;
   let completed = 0;
   let translated = 0;
   let cached = 0;
@@ -678,6 +756,7 @@ async function translateDocument(): Promise<void> {
           sendRuntimeMessage<TranslateBatchResponse>({
             type: "TRANSLATE_BATCH",
             texts: translatableBlocks.map((block) => block.text),
+            preservePlaceholders: true,
             sourceLang: sourceLang.value,
             targetLang: targetLang.value,
             providerId: provider.value
@@ -691,6 +770,7 @@ async function translateDocument(): Promise<void> {
           if (!block.translatable) return block.text;
           const translation = result.translations[translationIndex] ?? block.text;
           translationIndex += 1;
+          validatePdfMathTranslation(translation, block.formulas);
           return translation;
         });
         renderPageTranslations(page, translations);

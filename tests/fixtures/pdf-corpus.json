@@ -1,0 +1,61 @@
+[
+  {
+    "id": "admm",
+    "title": "Alternating Direction Method of Multipliers (CMU lecture slides)",
+    "source": "https://www.stat.cmu.edu/~ryantibs/convexopt/lectures/admm.pdf",
+    "url": "https://www.stat.cmu.edu/~ryantibs/convexopt/lectures/admm.pdf",
+    "pages": 34,
+    "inspect": [1, 2, 5, 8, 20],
+    "features": "Landscape slides, large headings, math-font bullets, inline formulas and source font-size fidelity"
+  },
+  {
+    "id": "pmlr",
+    "title": "PMLR double-column format sample",
+    "source": "https://proceedings.mlr.press/assets/examples/pmlr-sample-double-column.pdf",
+    "url": "https://proceedings.mlr.press/assets/examples/pmlr-sample-double-column.pdf",
+    "pages": 3,
+    "inspect": [1, 2, 3],
+    "features": "Two columns, algorithms, inline integrals, full-width figures and tables"
+  },
+  {
+    "id": "bert",
+    "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+    "source": "https://aclanthology.org/N19-1423/",
+    "url": "https://aclanthology.org/N19-1423.pdf",
+    "pages": 16,
+    "inspect": [3, 5, 11],
+    "features": "Two columns, footnotes, diagram labels, wide tables and appendices"
+  },
+  {
+    "id": "attention",
+    "title": "Attention Is All You Need",
+    "source": "https://arxiv.org/abs/1706.03762",
+    "url": "https://arxiv.org/pdf/1706.03762",
+    "pages": 15,
+    "inspect": [1, 4, 5, 7, 14],
+    "preservedRegions": [{ "page": 14, "x": 105, "y": 195, "width": 405, "height": 455, "tolerance": 8, "maximumDifferentRatio": 0.00001 }],
+    "features": "Fractions, superscripts, author footnotes, angled chart labels and dense diagrams"
+  },
+  {
+    "id": "jmlr",
+    "title": "Scikit-learn: Machine Learning in Python",
+    "source": "https://jmlr.org/papers/v12/pedregosa11a.html",
+    "url": "https://jmlr.org/papers/volume12/pedregosa11a/pedregosa11a.pdf",
+    "pages": 6,
+    "inspect": [2, 3, 6],
+    "features": "Journal typography, code, benchmark tables, accents and references"
+  },
+  {
+    "id": "plos",
+    "title": "Mathematical modelling, analysis and numerical simulation of social media addiction and depression",
+    "source": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0293807",
+    "url": "https://journals.plos.org/plosone/article/file?id=10.1371%2Fjournal.pone.0293807&type=printable",
+    "pages": 43,
+    "inspect": [7, 12, 19, 30, 43],
+    "preservedRegions": [
+      { "page": 19, "x": 282, "y": 178, "width": 195, "height": 118 },
+      { "page": 19, "x": 270, "y": 640, "width": 215, "height": 55 }
+    ],
+    "features": "Special math fonts, multiline systems, matrices, sidebars, tables and plots"
+  }
+]

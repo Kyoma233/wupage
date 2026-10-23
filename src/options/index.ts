@@ -46,7 +46,7 @@ const ZHIPU_MODEL_OPTIONS = [
   "glm-4-flashx-250414"
 ];
 const DEEPSEEK_MODEL_OPTIONS = [
-  "deepseek-v4-flash",
+  "deepseek-flash",
   "deepseek-v4-pro"
 ];
 const DEFAULT_LLM_PROMPT =
@@ -230,6 +230,15 @@ function renderProviderForm(): void {
         </label>
       </div>
       <label>系统提示词 <textarea data-field="systemPrompt">${escapeHtml(provider.systemPrompt)}</textarea></label>
+      ${isAnthropic ? "" : `
+        <label>Ollama 兼容
+          <select data-field="ollamaCompatibility">
+            <option value="enabled" ${provider.type === "openai-compatible" && provider.ollamaCompatibility !== false ? "selected" : ""}>开启（默认）</option>
+            <option value="disabled" ${provider.type === "openai-compatible" && provider.ollamaCompatibility === false ? "selected" : ""}>关闭</option>
+          </select>
+        </label>
+        <p class="hint">默认开启，支持 IPv4、IPv6、自定义端口和完整 Chat Completions 地址。</p>
+      `}
       <p class="hint">接口格式：${isAnthropic ? "Anthropic Messages" : "OpenAI Chat Completions"}。</p>
     `);
     return;
@@ -460,6 +469,7 @@ function createCustomProvider(name: string, kind: string, llmFormat: string): Pr
     chunkSize: 3200,
     concurrency: settings.concurrency,
     baseURL: "https://api.openai.com/v1",
+    ollamaCompatibility: true,
     apiKey: "",
     model: "gpt-4o-mini",
     systemPrompt: DEFAULT_LLM_PROMPT
@@ -590,7 +600,10 @@ function readProviderFromForm(provider: ProviderConfig): ProviderConfig {
       baseURL: field("baseURL").trim(),
       apiKey: field("apiKey"),
       model: field("model").trim(),
-      systemPrompt: field("systemPrompt")
+      systemPrompt: field("systemPrompt"),
+      ...(provider.type === "openai-compatible" ? {
+        ollamaCompatibility: field("ollamaCompatibility") === "enabled"
+      } : {})
     };
   }
   if (provider.type === "deepseek") {
@@ -599,7 +612,7 @@ function readProviderFromForm(provider: ProviderConfig): ProviderConfig {
       label: field("label").trim() || provider.label,
       baseURL: field("baseURL").trim() || "https://api.deepseek.com",
       apiKey: field("apiKey"),
-      model: field("model").trim() || "deepseek-v4-flash",
+      model: field("model").trim() || "deepseek-flash",
       systemPrompt: field("systemPrompt")
     };
   }

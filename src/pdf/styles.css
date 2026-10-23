@@ -467,7 +467,7 @@ button:disabled {
   animation: none;
 }
 
-.canvas-shell canvas {
+.canvas-shell > canvas {
   width: 100% !important;
   height: auto !important;
   display: block;
@@ -557,12 +557,20 @@ button:disabled {
   overflow: visible;
 }
 
+.translation-layer-viewport {
+  position: absolute;
+  z-index: 2;
+  inset: -24px;
+  overflow: clip;
+  pointer-events: none;
+}
+
 .translation-text-layer {
   --translation-ui-scale: 1;
   position: absolute;
   z-index: 2;
-  top: 0;
-  left: 0;
+  top: 24px;
+  left: 24px;
   transform-origin: left top;
   pointer-events: none;
   opacity: 1;
@@ -572,18 +580,16 @@ button:disabled {
 
 .translation-block {
   position: absolute;
-  min-width: 32px;
-  min-height: 18px;
-  border: 1px solid transparent;
+  outline: 1px solid transparent;
   background: transparent;
   pointer-events: auto;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: outline-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 
 .translation-block:hover,
 .translation-block:focus-within,
 .translation-block.is-interacting {
-  border-color: rgba(48, 99, 84, 0.7);
+  outline-color: rgba(48, 99, 84, 0.7);
   background: rgba(255, 255, 255, 0.2);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8);
 }
@@ -608,6 +614,12 @@ button:disabled {
   height: 0;
 }
 
+.pdf-inline-formula {
+  display: inline-block;
+  pointer-events: none;
+  user-select: all;
+}
+
 .translation-block-text:focus {
   overflow: auto;
   scrollbar-width: thin;
@@ -618,18 +630,23 @@ button:disabled {
   height: 8px;
 }
 
-.translation-block-move,
-.translation-block-delete,
-.translation-block-resize {
+.translation-block-toolbar {
   position: absolute;
   z-index: 2;
+  top: calc(-19px * var(--translation-ui-scale));
+  left: -1px;
+  display: flex;
+  gap: calc(2px * var(--translation-ui-scale));
+  opacity: 0;
+}
+
+.translation-block-control {
   width: calc(18px * var(--translation-ui-scale));
   height: calc(18px * var(--translation-ui-scale));
   display: grid;
   place-items: center;
   border: 1px solid rgba(43, 68, 60, 0.3);
   padding: 0;
-  opacity: 0;
   color: #253c35;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 2px 7px rgba(20, 36, 30, 0.16);
@@ -639,15 +656,13 @@ button:disabled {
   transition: opacity 100ms ease;
 }
 
-.translation-block:hover > :is(.translation-block-move, .translation-block-delete, .translation-block-resize),
-.translation-block:focus-within > :is(.translation-block-move, .translation-block-delete, .translation-block-resize),
-.translation-block.is-interacting > :is(.translation-block-move, .translation-block-delete, .translation-block-resize) {
+.translation-block:hover > :is(.translation-block-toolbar, .translation-block-resize),
+.translation-block:focus-within > :is(.translation-block-toolbar, .translation-block-resize),
+.translation-block.is-interacting > :is(.translation-block-toolbar, .translation-block-resize) {
   opacity: 1;
 }
 
 .translation-block-move {
-  top: calc(-19px * var(--translation-ui-scale));
-  left: -1px;
   cursor: grab;
 }
 
@@ -656,13 +671,14 @@ button:disabled {
 }
 
 .translation-block-delete {
-  top: calc(-19px * var(--translation-ui-scale));
-  right: -1px;
   color: #a43e37;
   cursor: pointer;
 }
 
 .translation-block-resize {
+  position: absolute;
+  z-index: 2;
+  opacity: 0;
   right: -1px;
   bottom: -1px;
   width: calc(12px * var(--translation-ui-scale));
@@ -674,7 +690,7 @@ button:disabled {
   cursor: nwse-resize;
 }
 
-.translation-canvas-shell:not(.is-rendered) canvas {
+.translation-canvas-shell:not(.is-rendered) > canvas {
   visibility: hidden;
 }
 

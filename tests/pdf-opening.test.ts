@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 import type { RuntimeRequest, RuntimeResponse } from "../src/shared/types";
 
 const { getDocument } = vi.hoisted(() => ({ getDocument: vi.fn() }));
-vi.mock("pdfjs-dist", () => ({ GlobalWorkerOptions: {}, TextLayer: vi.fn(), getDocument }));
+vi.mock("pdfjs-dist", () => ({ GlobalWorkerOptions: {}, OPS: {}, TextLayer: vi.fn(), getDocument }));
 
 describe("PDF source opening", () => {
   let fileAccess: ReturnType<typeof vi.fn>;
@@ -76,11 +76,29 @@ describe("PDF source opening", () => {
     await launch(fileUrl);
     await vi.waitFor(() => expect(translated()).toBe(true));
     expect(fileAccess).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "TRANSLATE_BATCH", preservePlaceholders: true }));
     expect(fetchPdf).toHaveBeenCalledWith(fileUrl, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(getDocument).toHaveBeenCalledWith({ data: expect.any(Uint8Array) });
     expect(document.querySelector("#documentName")?.textContent).toBe("Annual report.pdf");
     expect(document.querySelector<HTMLElement>("#readerView")?.hidden).toBe(false);
     expect(document.querySelector<HTMLElement>("#fileAccessNotice")?.hidden).toBe(true);
+  });
+
+  it("blocks repeated translation clicks while reader settings are still being saved", async () => {
+    await launch(fileUrl, false);
+    const button = document.querySelector<HTMLButtonElement>("#translateDocument")!;
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    let finishSave: (response: RuntimeResponse) => void = () => undefined;
+    const original = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation((request: RuntimeRequest) => request.type === "SAVE_SETTINGS"
+      ? new Promise<RuntimeResponse>((resolve) => { finishSave = resolve; }) : original(request));
+    button.click();
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "SAVE_SETTINGS")).toHaveLength(1);
+    finishSave({ ok: true });
+    await vi.waitFor(() => expect(translated()).toBe(true));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
   });
 
   it("does not read a file before permission, then retries the same PDF and translation", async () => {
