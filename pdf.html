@@ -60,6 +60,14 @@
           </div>
 
           <div class="open-card">
+            <section id="fileAccessNotice" class="file-access-notice" aria-labelledby="fileAccessTitle" hidden>
+              <strong id="fileAccessTitle">允许访问本地 PDF</strong>
+              <p>在扩展详情中开启“允许访问文件网址”或“允许访问文件 URL”。如果浏览器关闭了此页，请回到原 PDF 标签页再次点击“翻译 PDF”；也可以直接在下方选择文件。</p>
+              <div class="file-access-actions">
+                <button id="openFileAccessSettings" type="button" class="ghost-button">打开扩展设置</button>
+                <button id="retryLocalPdf" type="button" class="ghost-button">重试打开</button>
+              </div>
+            </section>
             <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="选择 PDF 文件">
               <div class="pdf-glyph" aria-hidden="true">
                 <span>PDF</span>
@@ -71,9 +79,9 @@
               <small>文件仅在当前浏览器中处理</small>
             </div>
 
-            <div class="divider"><span>或者使用在线地址</span></div>
+            <div class="divider"><span>或者使用 PDF 地址</span></div>
             <form id="urlForm" class="url-form">
-              <label for="pdfUrl" class="visually-hidden">PDF 在线地址</label>
+              <label for="pdfUrl" class="visually-hidden">PDF 在线地址或本地文件地址</label>
               <input id="pdfUrl" type="url" placeholder="https://example.com/document.pdf" autocomplete="off" />
               <button type="submit" class="ghost-button">打开</button>
             </form>

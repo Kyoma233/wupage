@@ -4,6 +4,7 @@ import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import type { ExtensionSettings } from "../shared/types";
 import "./styles.css";
 import { setupOcrControl } from "../shared/ocr-control";
+import { isLikelyPdfUrl } from "../pdf/launch";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -11,6 +12,7 @@ const provider = query<HTMLSelectElement>("#provider");
 const translationDisplayMode = query<HTMLSelectElement>("#translationDisplayMode");
 const status = query<HTMLParagraphElement>("#status");
 const pageToggleButton = query<HTMLButtonElement>("#pageToggle");
+const openPdfButton = query<HTMLButtonElement>("#openPdf");
 const paragraphModeButton = query<HTMLButtonElement>("#paragraphMode");
 const floatingBallButton = query<HTMLButtonElement>("#floatingBall");
 const imageTranslationButton = query<HTMLButtonElement>("#imageTranslation");
@@ -54,8 +56,8 @@ async function init(): Promise<void> {
   imageTranslationButton.setAttribute("aria-pressed", String(settings.imageTranslationEnabled === true));
   setupOcrControl(imageTranslationButton, () => { settings.imageTranslationEnabled = false; imageTranslationButton.setAttribute("aria-pressed", "false"); });
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  activeTabIsPdf = Boolean(activeTab.url && isLikelyPdfUrl(activeTab.url));
-  pageTranslationAvailable = activeTabIsPdf || isSupportedPageUrl(activeTab.url);
+  activeTabIsPdf = isLikelyPdfUrl(activeTab?.url);
+  pageTranslationAvailable = activeTabIsPdf || isSupportedPageUrl(activeTab?.url);
   if (pageTranslationAvailable && !activeTabIsPdf) {
     await loadParagraphMode();
     await loadTranslationState();
@@ -64,7 +66,7 @@ async function init(): Promise<void> {
     paragraphModeButton.title = "浏览器设置页和扩展内部页面不支持段落模式。";
     pageToggleButton.title = "请切换到普通网页后再翻译。";
     debugButton.title = "请切换到普通网页后再打开 Debug。";
-    setStatus("此页面不支持翻译，请切换到普通网页。");
+    setStatus("此页面不支持全文翻译，可点击“打开 PDF”导入文档。");
   }
   if (activeTabIsPdf) {
     paragraphModeAvailable = false;
@@ -79,6 +81,11 @@ async function init(): Promise<void> {
   provider.addEventListener("change", savePopupSettings);
   translationDisplayMode.addEventListener("change", savePopupSettings);
   pageToggleButton.addEventListener("click", togglePageTranslation);
+  openPdfButton.addEventListener("click", () => {
+    void openPdfTranslator(false).catch((error: unknown) => {
+      setStatus(error instanceof Error ? error.message : String(error));
+    });
+  });
   paragraphModeButton.addEventListener("click", toggleParagraphMode);
   floatingBallButton.addEventListener("click", toggleFloatingBall);
   imageTranslationButton.addEventListener("click", async () => {
@@ -198,26 +205,18 @@ function setBusy(value: boolean): void {
   clearCacheButton.disabled = value;
 }
 
-async function openPdfTranslator(): Promise<void> {
+async function openPdfTranslator(useCurrentTab = true): Promise<void> {
   await savePopupSettings();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const pageUrl = new URL(chrome.runtime.getURL("pdf.html"));
-  if (tab.url && isLikelyPdfUrl(tab.url)) {
-    pageUrl.searchParams.set("url", tab.url);
-    pageUrl.searchParams.set("translate", "1");
+  if (useCurrentTab) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.url && isLikelyPdfUrl(tab.url)) {
+      pageUrl.searchParams.set("url", tab.url);
+      pageUrl.searchParams.set("translate", "1");
+    }
   }
   await chrome.tabs.create({ url: pageUrl.toString() });
   window.close();
-}
-
-function isLikelyPdfUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:")
-      && (url.pathname.toLowerCase().endsWith(".pdf") || url.search.toLowerCase().includes(".pdf"));
-  } catch {
-    return false;
-  }
 }
 
 function isSupportedPageUrl(value: string | undefined): boolean {

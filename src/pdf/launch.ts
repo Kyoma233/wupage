@@ -3,6 +3,24 @@ export interface PdfLaunchOptions {
   autoTranslate: boolean;
 }
 
+export function isLikelyPdfUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const pdfPath = decodeURIComponent(url.pathname).toLowerCase().endsWith(".pdf");
+    if (url.protocol === "file:") return pdfPath;
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && (pdfPath || url.search.toLowerCase().includes(".pdf"));
+  } catch {
+    return false;
+  }
+}
+
+export function getExtensionDetailsUrl(extensionId: string, userAgent: string): string {
+  const scheme = /Edg\//.test(userAgent) ? "edge" : "chrome";
+  return `${scheme}://extensions/?id=${encodeURIComponent(extensionId)}`;
+}
+
 export function getPdfLaunchOptions(href: string): PdfLaunchOptions {
   const parameters = new URL(href).searchParams;
   return {
