@@ -74,6 +74,19 @@ export function injectContentStyles(): void {
       display: none !important;
     }
 
+    .wupage-translation[data-wupage-container="authored-lines"] {
+      position: static;
+      display: block;
+      float: none;
+      width: auto;
+      min-width: 0;
+      height: auto;
+      transform: none;
+      letter-spacing: inherit;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
     .wupage-translation[data-wupage-container="image-text"] {
       display: block;
       margin: 0.6em 0;

@@ -10,6 +10,7 @@ import {
   findTranslatableParagraph,
   hasPageTranslations,
   hasTranslationsIn,
+  invalidateStaleSegments,
   mapTranslationTextColor,
   renderTargetPlaceholder,
   renderTargetTranslation,
@@ -18,6 +19,82 @@ import {
 } from "../src/content/dom";
 
 describe("content DOM translation extraction", () => {
+  it.each(["bilingual", "bilingual-accent"] as const)("keeps authored multiline text inside its column in %s mode", (mode) => {
+    document.body.innerHTML = `<div id="profile"><span id="source">すべての魔法少女たちを救うことを願い<br>「円環の理」と呼ばれる神にも等しい<br>存在となった少女。<br></span></div>`;
+    stubLayout("rgb(34, 34, 34)", { style: (element) => element.id === "source"
+      ? { display: "inline-block", whiteSpace: "nowrap" } : {} });
+    const source = document.querySelector<HTMLElement>("#source")!;
+    const original = source.innerHTML;
+    const breaks = [...source.querySelectorAll("br")];
+    const segments = collectTextSegments();
+    expect(segments).toHaveLength(1);
+    expect(segments[0].text).toContain("願い 「円環の理」");
+    renderTranslationPlaceholders(segments);
+    expect(source.nextElementSibling?.getAttribute("data-wupage-container")).toBe("authored-lines");
+    renderTranslations([{ id: segments[0].id, text: "她希望拯救所有魔法少女，成为被称作圆环之理的存在。" }], mode);
+    const output = source.nextElementSibling!;
+    expect(output.getAttribute("data-wupage-mode")).toBe("block");
+    expect(output.getAttribute("data-wupage-display-mode")).toBe(mode);
+    expect(output.parentElement?.id).toBe("profile");
+    expect(source.querySelector(".wupage-translation")).toBeNull();
+    expect(source.innerHTML).toBe(original);
+    clearTranslations();
+    expect(source.innerHTML).toBe(original);
+    expect([...source.querySelectorAll("br")]).toEqual(breaks);
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+  });
+
+  it("restores authored line breaks when returning from replacement mode", () => {
+    document.body.innerHTML = `<div><span id="source">First authored sentence with enough text.<br>Second authored sentence on its own line.<br></span></div>`;
+    stubLayout();
+    const source = document.querySelector<HTMLElement>("#source")!;
+    const original = source.innerHTML;
+    const originalElement = source.outerHTML;
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: "合并为完整段落的译文。" }], "replace");
+    expect(source.classList.contains("wupage-replaced-source")).toBe(true);
+    expect(source.nextElementSibling?.textContent).toBe("合并为完整段落的译文。");
+    clearTranslations();
+    expect(source.classList.contains("wupage-replaced-source")).toBe(false);
+    expect(source.innerHTML).toBe(original);
+    expect(source.outerHTML).toBe(originalElement);
+  });
+
+  it("does not combine separate card fields just because their wrapper contains a line break", () => {
+    document.body.innerHTML = `<div><span>First independent field with enough text.</span><br><p>Another complete paragraph in the same card.</p></div>`;
+    stubLayout();
+    expect(collectTextSegments().map((segment) => segment.text)).toEqual([
+      "First independent field with enough text.", "Another complete paragraph in the same card."
+    ]);
+  });
+
+  it("reveals updated authored text without overwriting the host page's changes", () => {
+    document.body.innerHTML = `<div><span id="source">First authored sentence with enough text.<br>Second authored sentence on its own line.</span></div>`;
+    stubLayout();
+    const source = document.querySelector<HTMLElement>("#source")!;
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: "旧译文。" }], "replace");
+    source.firstChild!.textContent = "The page supplied an updated opening sentence.";
+    source.classList.add("host-updated");
+    expect(invalidateStaleSegments()).toContain(segment.id);
+    expect(source.className).toBe("host-updated");
+    expect(source.textContent).toBe("The page supplied an updated opening sentence.Second authored sentence on its own line.");
+    expect(source.querySelectorAll("br")).toHaveLength(1);
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+  });
+
+  it.each(["span", "div"])("keeps translations inside a %s that owns a flex layout column", (tag) => {
+    document.body.innerHTML = `<div id="layout"><${tag} id="column">First sentence in the text column.<br>Second sentence in the text column.</${tag}><img alt="" src="character.png"></div>`;
+    stubLayout("rgb(34, 34, 34)", { style: (element) => element.id === "layout" ? { display: "flex" } : {} });
+    const column = document.querySelector("#column")!;
+    const segments = collectTextSegments();
+    renderTranslations(segments.map(segment => ({ id: segment.id, text: "文字栏内的译文。" })));
+    const outputs = [...document.querySelectorAll(".wupage-translation")];
+    expect(outputs).toHaveLength(2);
+    expect(outputs.every(output => column.contains(output))).toBe(true);
+    expect(document.querySelector("#layout")!.children).toHaveLength(2);
+  });
+
   it("keeps Reddit comment metadata untouched and translations in the body slot", () => {
     document.body.innerHTML = `
       <main role="main">
