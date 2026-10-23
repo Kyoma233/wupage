@@ -115,6 +115,20 @@ class PublishEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'invalid operation Location'):
                 self.client.start_operation('/submissions', b'{}', 'application/json')
 
+    def test_accepted_poll_responses_wait_for_success(self):
+        empty = Response(202)
+        empty.body = b''
+        responses = [
+            empty,
+            Response(202, body={'status': 'InProgress'}),
+            Response(202, body={'status': 'Succeeded'}),
+        ]
+        with patch.object(publish_edge, 'urlopen', side_effect=responses) as send, \
+                patch.object(publish_edge.time, 'sleep') as sleep:
+            self.client.wait_for_operation(f'/submissions/draft/package/operations/{UPLOAD_ID}')
+        self.assertEqual(send.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
     def test_polling_times_out(self):
         with patch.object(publish_edge.time, 'monotonic', side_effect=[0, 0, 601]), \
                 patch.object(publish_edge.time, 'sleep'), \

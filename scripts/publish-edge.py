@@ -70,10 +70,12 @@ class EdgeClient:
         previous_status = None
         while time.monotonic() < deadline:
             code, _, body = self.request('GET', path)
-            if code != 200:
+            if code not in (200, 202):
                 raise RuntimeError(f'Could not check Edge operation: HTTP {code}.')
-            result = json.loads(body)
-            status = result.get('status')
+            result = json.loads(body) if body.strip() else {}
+            # The live API also uses 202 while an operation is processing,
+            # including responses without a JSON body.
+            status = result.get('status', 'InProgress' if code == 202 else None)
             if status != previous_status:
                 print(f'Operation status: {status}')
                 previous_status = status
