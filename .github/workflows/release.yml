@@ -13,6 +13,8 @@ jobs:
   release:
     name: Build and publish Edge package
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.github-release.outputs.published }}
 
     steps:
       - name: Check out repository
@@ -62,6 +64,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Test Edge publishing script
+        run: python3 -m unittest discover -s tests -p 'test_publish_edge.py'
+
       - name: Build extension
         run: npm run build
 
@@ -97,6 +102,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create or update GitHub Release
+        id: github-release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -118,6 +124,7 @@ jobs:
               --title "WuPage $GITHUB_REF_NAME" \
               "${release_flags[@]}"
           fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Trigger wupage-web sync
         if: success()
@@ -142,3 +149,19 @@ jobs:
             --ref main \
             -f tag="$GITHUB_REF_NAME"
           echo "Dispatched sync-web.yml with tag=$GITHUB_REF_NAME"
+
+  publish-edge:
+    name: Submit release to Microsoft Edge Add-ons
+    needs: release
+    # A website sync failure must not prevent an already-created release from
+    # reaching the store. GITHUB_TOKEN-created releases do not trigger another
+    # workflow through release:published, so call the reusable workflow directly.
+    if: ${{ always() && needs.release.outputs.published == 'true' && vars.EDGE_PRODUCT_ID != '' && !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/publish-edge.yml
+    permissions:
+      contents: read
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}

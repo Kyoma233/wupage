@@ -1,14 +1,27 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>OCR 安装与识别验证</title></head><body>
-<main style="max-width:420px;margin:30px auto;font:14px system-ui">
+<main style="max-width:860px;margin:30px auto;font:14px/1.6 system-ui">
 <div class="image-feature-row"><button id="imageTranslation" class="switch-row" aria-pressed="false"><span>图片翻译</span><span class="switch"><span></span></span></button><button id="ocrModelAction" class="ocr-model-action"></button></div>
 <p id="ocrDescription" class="ocr-description"></p><progress id="ocrModelProgress" class="ocr-model-progress" hidden></progress><p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
 <p>此验证页使用真实模型、下载校验和沙箱；仅模拟扩展消息通道。</p>
-<button id="recognize">识别样例</button><canvas id="sample" width="600" height="180" style="width:100%;margin-top:20px"></canvas><pre id="result" style="white-space:pre-wrap"></pre>
+<button id="recognize">识别样例</button>
+<button id="japanese-text">日文透明文字原图</button><button id="japanese-banner">日文艺术字横幅</button>
+<button id="translate-sample">真实识别并翻译</button>
+<button id="layout-regression" hidden>覆盖排版回归（固定译文）</button>
+<p id="sample-info">英文样例</p><canvas id="sample" width="600" height="180" style="max-width:100%;margin-top:20px"></canvas>
+<p id="recognition-status"></p><ol id="recognized-lines"></ol>
+<details><summary>识别详情</summary><pre id="result" style="white-space:pre-wrap"></pre></details>
+<p id="translation-status"></p><canvas id="translated" style="max-width:100%" hidden></canvas>
+<ol id="translated-lines"></ol>
 </main><script type="module">
 import '../../src/popup/styles.css';
 import { setupOcrControl } from '../../src/shared/ocr-control';
+import { translateImageWithSettings } from '../../src/background/image-translation';
+import { DEFAULT_SETTINGS } from '../../src/shared/defaults';
+import { renderImageTranslation } from '../../src/content/image-rendering';
+import { positionedLines } from '../../src/ocr/regions';
+import { restoreTextFromAlternative } from '../../src/ocr/text-lines';
 let listener;
-window.chrome = { runtime: { id:'fixture', getURL: path => new URL('/dist/' + path, location.href).href,
+window.chrome = { offscreen: {hasDocument: async()=>true}, runtime: { id:'fixture', getURL: path => new URL('/dist/' + path, location.href).href,
 onMessage: {addListener: callback => listener = callback},
 sendMessage: request => new Promise(resolve => listener({target:'ocr-offscreen', action: ({GET_OCR_STATUS:'status',INSTALL_OCR:'install',REMOVE_OCR:'remove'})[request.type] ?? request.action, dataUrl:request.dataUrl}, {id:'fixture'}, resolve)) }};
 await import('../../src/ocr/offscreen');
@@ -16,10 +29,49 @@ const toggle = document.querySelector('#imageTranslation');
 toggle.onclick = () => toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
 setupOcrControl(toggle, () => toggle.setAttribute('aria-pressed','false'));
 const canvas = document.querySelector('#sample'); const ctx = canvas.getContext('2d');
+let sampleAlternative='';
 ctx.fillStyle = '#fff';ctx.fillRect(0,0,600,180);ctx.fillStyle='#172026';ctx.font='28px Arial';ctx.fillText('Cache performance',25,60);ctx.fillText('Hit rate 41.7%',25,120);
+async function loadSample(name) {
+const bitmap=await createImageBitmap(await (await fetch('/samples/'+name)).blob());
+canvas.width=bitmap.width;canvas.height=bitmap.height;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(bitmap,0,0);bitmap.close();
+document.querySelector('#sample-info').textContent=name+' · '+canvas.width+' × '+canvas.height;
+sampleAlternative=name==='text_lead.png'?'新房昭之×虚淵玄（ニトロプラス）×蒼樹うめ×シャフトによる『叛逆の物語』の正統なる続編―― そして、新たな始まり。':'';
+document.querySelector('#layout-regression').hidden=!sampleAlternative;
+document.querySelector('#result').textContent='';
+document.querySelector('#recognized-lines').replaceChildren();document.querySelector('#recognition-status').textContent='';
+document.querySelector('#translated').hidden=true;document.querySelector('#translated-lines').replaceChildren();document.querySelector('#translation-status').textContent='';
+}
+document.querySelector('#japanese-text').onclick=()=>loadSample('text_lead.png');
+document.querySelector('#japanese-banner').onclick=()=>loadSample('bnr_mediamix.png');
 document.querySelector('#recognize').onclick = async () => {
 document.querySelector('#result').textContent='正在识别…';
+document.querySelector('#recognition-status').textContent='正在识别…';document.querySelector('#recognized-lines').replaceChildren();
 const result = await chrome.runtime.sendMessage({action:'recognize',dataUrl:canvas.toDataURL()});
 document.querySelector('#result').textContent = JSON.stringify(result,null,2);
+document.querySelector('#recognition-status').textContent=result.ok?'识别出 '+result.data.lines.length+' 处文字':result.error;
+for(const line of result.data?.lines??[]){const item=document.createElement('li');item.textContent=line.text+'（置信度 '+(line.score*100).toFixed(1)+'%）';document.querySelector('#recognized-lines').append(item)}
+};
+document.querySelector('#translate-sample').onclick=async()=>{
+const status=document.querySelector('#translation-status');status.textContent='正在使用真实 OCR 和 Google Web Translate…';
+try{
+const result=await translateImageWithSettings({...DEFAULT_SETTINGS,imageTranslationEnabled:true,cacheEnabled:false},{dataUrl:canvas.toDataURL(),width:canvas.width,height:canvas.height,sourceText:sampleAlternative||undefined});
+const output=document.querySelector('#translated');output.width=canvas.width;output.height=canvas.height;renderImageTranslation(output,canvas,result.regions);output.hidden=false;
+status.textContent=result.warning??'已翻译 '+result.regions.length+' 处文字 · 使用真实 Google Web Translate';
+document.querySelector('#translated-lines').replaceChildren();for(const region of result.regions){const item=document.createElement('li');item.textContent=region.text+' → '+region.translation;document.querySelector('#translated-lines').append(item)}
+}catch(error){status.textContent=error.message}
+};
+document.querySelector('#layout-regression').onclick=async()=>{
+const status=document.querySelector('#translation-status');status.textContent='正在使用真实 OCR 验证覆盖排版…';
+try{
+const recognized=await chrome.runtime.sendMessage({action:'recognize',dataUrl:canvas.toDataURL()});
+if(!recognized.ok)throw new Error(recognized.error);
+const regions=positionedLines(restoreTextFromAlternative(recognized.data.lines,sampleAlternative),canvas.width,canvas.height);
+if(regions.length!==2)throw new Error('排版回归预期识别为两行，实际为 '+regions.length+' 行');
+const translations=['由新房昭之×虚渊玄（Nitroplus）×苍树梅×SHAFT共同打造','《叛逆的物语》的正统续篇——以及，全新的开始。'];
+regions.forEach((region,index)=>region.translation=translations[index]);
+const output=document.querySelector('#translated');output.width=canvas.width;output.height=canvas.height;renderImageTranslation(output,canvas,regions);output.hidden=false;
+document.querySelector('#translated-lines').replaceChildren();
+status.textContent='排版验证：真实识别框，固定译文（仅验证符号覆盖与断句）';
+}catch(error){status.textContent=error.message}
 };
 </script></body></html>

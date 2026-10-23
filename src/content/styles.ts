@@ -74,6 +74,66 @@ export function injectContentStyles(): void {
       display: none !important;
     }
 
+    .wupage-translation[data-wupage-container="image-text"] {
+      display: block;
+      margin: 0.6em 0;
+      padding: 0.8em 1em;
+      border-radius: 4px;
+      color: rgb(245, 245, 245);
+      background: rgb(23, 32, 38);
+      font-size: max(16px, 1rem);
+      line-height: 1.75;
+      text-align: start;
+      white-space: pre-wrap;
+    }
+
+    .wupage-translation[data-wupage-image-layout="interleaved"] {
+      container-type: inline-size;
+      margin: 0;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      text-align: center;
+      white-space: normal;
+      pointer-events: auto;
+    }
+
+    .wupage-image-text-row {
+      display: block;
+      margin: 0 0 1.4em;
+      font-size: var(--wupage-image-font-size);
+    }
+
+    .wupage-image-text-original {
+      position: relative;
+      display: block;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .wupage-image-text-original > img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: block;
+      width: 100%;
+      max-width: none;
+      height: auto;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      transform-origin: top left;
+    }
+
+    .wupage-image-text-result {
+      display: block;
+      margin: 0.3em 0 0;
+      font-size: 0.95em;
+      font-weight: 600;
+      line-height: 1.75;
+      white-space: pre-wrap;
+    }
+
     .wupage-translation-pending {
       min-width: 1.25em;
       min-height: 1.25em;

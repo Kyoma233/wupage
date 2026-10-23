@@ -9,6 +9,8 @@ vi.mock("../src/content/runtime", () => ({ sendRuntimeRequest: vi.fn(), hasRunti
 
 const region: ImageTextRegion = { box: [100, 100, 700, 200], text: "Hello world", translation: "你好，世界", foreground: "#111111", background: "#ffffff", align: "left", bold: false };
 const context = { drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(),
+  clearRect: vi.fn(),
+  getImageData: vi.fn(),
   fillText: vi.fn(), measureText: (text: string) => ({ width: Array.from(text).length * 6 }), font: "" };
 function shadow() { return document.querySelector("#wupage-image-tools")!.shadowRoot!; }
 function button() { return shadow().querySelector("button")!; }
@@ -29,12 +31,71 @@ beforeEach(() => {
 afterEach(() => {
   setImageTranslationEnabled(false); vi.restoreAllMocks(); vi.mocked(sendRuntimeRequest).mockReset(); document.body.innerHTML = "";
   context.fillText.mockClear(); context.fillRect.mockClear();
+  context.getImageData.mockReset();
   document.documentElement.removeAttribute("style");
   document.getElementById("wupage-image-context-notice")?.remove();
   delete (document as Partial<Document>).elementFromPoint;
 });
 
 describe("image translation controls", () => {
+  it("shows the actual reason when recognized text produces no translated regions", async () => {
+    vi.mocked(sendRuntimeRequest).mockResolvedValue({ regions: [], targetLang: "zh-CN", cached: false,
+      warning: "已识别 3 处文字，翻译服务返回的译文与原文相同。" });
+    setImageTranslationEnabled(true);
+    button().click();
+
+    await vi.waitFor(() => expect(shadow().querySelector(".status")?.textContent).toContain("已识别 3 处文字"));
+    expect(shadow().querySelector("canvas")).toBeNull();
+    expect(button().disabled).toBe(false);
+  });
+  function transparentTranslation() {
+    context.getImageData.mockImplementation((_left, _top, width, height) => {
+      const pixels = new Uint8ClampedArray(width * height * 4);
+      for (let pixel = 0; pixel < width * height / 5; pixel++) pixels.set([153, 125, 38, 255], pixel * 4);
+      return { data: pixels };
+    });
+    vi.mocked(sendRuntimeRequest).mockResolvedValue({ regions: [{ ...region, sampleColors: true }], targetLang: "zh-CN", cached: false });
+  }
+
+  it("replaces transparent source pixels and restores them when toggled or disabled", async () => {
+    transparentTranslation();
+    const image = document.querySelector("img")!;
+    image.style.clipPath = "inset(1px)";
+    setImageTranslationEnabled(true);
+    button().click();
+    await vi.waitFor(() => expect(image.getAttribute("data-wupage-image-source-mask")).toBe("image"));
+    expect(image.style.clipPath).toBe("inset(1px)");
+
+    button().click();
+    expect(image.hasAttribute("data-wupage-image-source-mask")).toBe(false);
+    expect(shadow().querySelector("canvas")!.hidden).toBe(true);
+    button().click();
+    expect(image.getAttribute("data-wupage-image-source-mask")).toBe("image");
+    setImageTranslationEnabled(false);
+    expect(image.hasAttribute("data-wupage-image-source-mask")).toBe(false);
+    expect(image.style.clipPath).toBe("inset(1px)");
+    expect(document.getElementById("wupage-image-source-style")).toBeNull();
+  });
+
+  it("keeps a transparent background presentation discoverable across layout updates", async () => {
+    transparentTranslation();
+    const image = document.querySelector("img")!;
+    image.style.opacity = "0";
+    const background = document.createElement("div");
+    background.style.backgroundImage = `url("${image.src}")`;
+    document.body.append(background); background.append(image);
+    setImageTranslationEnabled(true);
+    button().click();
+    await vi.waitFor(() => expect(background.getAttribute("data-wupage-image-source-mask")).toBe("background"));
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    expect(background.getAttribute("data-wupage-image-source-mask")).toBe("background");
+    expect(shadow().querySelector("canvas")!.hidden).toBe(false);
+    button().click();
+    expect(background.hasAttribute("data-wupage-image-source-mask")).toBe(false);
+    expect(background.style.backgroundImage).toContain(image.src);
+  });
+
   function contextMessages() {
     vi.mocked(sendRuntimeRequest).mockImplementation(async (request) => request.type === "GET_SETTINGS"
       ? { ...DEFAULT_SETTINGS, imageTranslationEnabled: true }

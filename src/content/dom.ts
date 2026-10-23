@@ -4,6 +4,7 @@ import {
 } from "./visibility";
 import type { RenderVisibilitySnapshot } from "./visibility";
 import type { TranslationDisplayMode } from "../shared/types";
+import { readImageTextLayout } from "./image-text-layout";
 
 export interface TextSegment {
   id: string;
@@ -37,6 +38,15 @@ interface TrackedAttribute {
   name: "placeholder";
   sourceValue: string;
   translatedValue?: string;
+}
+
+interface TrackedImageText {
+  id: string;
+  image: HTMLImageElement;
+  sourceValue: string;
+  replaced?: boolean;
+  renderedSource?: string;
+  waitingForImage?: boolean;
 }
 
 type RenderMode = "block" | "inline" | "code-comment";
@@ -195,6 +205,7 @@ const CODE_COMMENT_TARGET_SELECTOR = ".react-code-text, .blob-code, pre, code, .
 let trackedNodes: TrackedNode[] = [];
 let trackedGroups: TrackedGroup[] = [];
 let trackedAttributes: TrackedAttribute[] = [];
+let trackedImageTexts: TrackedImageText[] = [];
 let protectedTokensById = new Map<string, ProtectedToken[]>();
 let sourceTextById = new Map<string, string>();
 const renderedById = new Map<string, Element>();
@@ -240,6 +251,9 @@ export function collectParagraphTextSegments(
   trackedAttributes = trackedAttributes.filter((tracked) =>
     tracked.element !== element && !element.contains(tracked.element)
   );
+  trackedImageTexts = trackedImageTexts.filter((tracked) =>
+    tracked.image !== element && !element.contains(tracked.image)
+  );
   return collectTextSegmentsFromRoot(element, false, translateCodeComments);
 }
 
@@ -276,6 +290,21 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
       stale.add(tracked.id);
     }
   }
+  for (const tracked of trackedImageTexts) {
+    const anchor = tracked.image.closest("picture") ?? tracked.image;
+    const output = renderedById.get(tracked.id);
+    if (!tracked.image.isConnected || tracked.image.getAttribute("alt") !== tracked.sourceValue
+      || (tracked.renderedSource && tracked.renderedSource !== (tracked.image.currentSrc || tracked.image.src))
+      || (tracked.waitingForImage && tracked.image.complete && tracked.image.naturalWidth > 0)
+      || (output && output.parentElement !== anchor.parentElement)) {
+      stale.add(tracked.id);
+    }
+    if (stale.has(tracked.id)) {
+      restoreImageTextSource(tracked);
+      tracked.image.removeAttribute(TRANSLATED_ATTR);
+      tracked.image.removeAttribute(TARGET_ATTR);
+    }
+  }
   for (const tracked of trackedNodes) {
     if (!stale.has(tracked.id)) continue;
     // Never overwrite a new value supplied by the host application.
@@ -294,6 +323,7 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
   trackedNodes = trackedNodes.filter((node) => !stale.has(node.id));
   trackedGroups = trackedGroups.filter((group) => !stale.has(group.id));
   trackedAttributes = trackedAttributes.filter((attribute) => !stale.has(attribute.id));
+  trackedImageTexts = trackedImageTexts.filter((tracked) => !stale.has(tracked.id));
   return [...stale];
 }
 
@@ -319,6 +349,16 @@ export function findTranslatableParagraph(start: Element | null): Element | null
 }
 
 export function clearTranslationsIn(element: Element): void {
+  // Image translations follow their picture, so they can sit outside the root
+  // being cleared (including when the root is the img itself).
+  for (const tracked of trackedImageTexts) {
+    if (tracked.image !== element && !element.contains(tracked.image)) continue;
+    renderedById.get(tracked.id)?.remove();
+    renderedById.delete(tracked.id);
+    removePendingForId(tracked.id);
+    tracked.image.removeAttribute(TRANSLATED_ATTR);
+    tracked.image.removeAttribute(TARGET_ATTR);
+  }
   restoreTrackedAttributesIn(element);
   restoreReplacedSourcesIn(element);
   const targetId = element.getAttribute(TARGET_ATTR);
@@ -335,6 +375,9 @@ export function clearTranslationsIn(element: Element): void {
   trackedGroups = trackedGroups.filter((group) => !group.nodes.some((tracked) => element.contains(tracked.node)));
   trackedAttributes = trackedAttributes.filter((tracked) =>
     tracked.element !== element && !element.contains(tracked.element)
+  );
+  trackedImageTexts = trackedImageTexts.filter((tracked) =>
+    tracked.image !== element && !element.contains(tracked.image)
   );
 }
 
@@ -414,7 +457,8 @@ function collectTextSegmentsFromRoot(
 
   const groupedSegments = groupTextSegments(textNodes, segments, visibility);
   const attributeSegments = collectAttributeSegments(root, visibility);
-  const collectedSegments = [...groupedSegments, ...attributeSegments];
+  const imageTextSegments = collectImageTextSegments(root, visibility);
+  const collectedSegments = [...groupedSegments, ...attributeSegments, ...imageTextSegments];
   collectedSegments.forEach((segment) => sourceTextById.set(segment.id, segment.text));
   return collectedSegments;
 }
@@ -478,6 +522,34 @@ export function renderTranslations(
     tracked.element.setAttribute(TRANSLATED_ATTR, "true");
     tracked.translatedValue = translation;
   }
+
+  for (const tracked of trackedImageTexts) {
+    const translation = translationById.get(tracked.id);
+    if (!translation || !tracked.image.isConnected) continue;
+    removePendingForId(tracked.id);
+    renderedById.get(tracked.id)?.remove();
+    renderedById.delete(tracked.id);
+    restoreImageTextSource(tracked);
+    if (isSameTranslation(tracked.id, translation)) {
+      tracked.image.removeAttribute(TRANSLATED_ATTR);
+      tracked.image.removeAttribute(TARGET_ATTR);
+      continue;
+    }
+    const element = document.createElement("span");
+    element.className = TRANSLATION_CLASS;
+    element.dataset.wupageDisplayMode = displayMode;
+    element.setAttribute("lang", "translated");
+    if (displayMode !== "replace") element.setAttribute("aria-hidden", "true");
+    if (displayMode === "bilingual-accent") {
+      element.style.color = mapTranslationTextColor("rgb(245, 245, 245)", "rgb(23, 32, 38)")
+        ?? "rgb(245, 245, 245)";
+    }
+    if (!renderInterleavedImageText(tracked, element, translation, displayMode)) {
+      element.textContent = translation;
+    }
+    insertImageTextTranslation(tracked, element);
+    renderedById.set(tracked.id, element);
+  }
 }
 
 export function renderTargetTranslation(
@@ -532,6 +604,13 @@ export function renderTranslationPlaceholders(segments: TextSegment[]): void {
     insertPending(tracked.node, tracked.id, tracked.mode);
     parent.setAttribute(TRANSLATED_ATTR, "true");
   }
+
+  for (const tracked of trackedImageTexts) {
+    if (!pendingIds.has(tracked.id) || !tracked.image.isConnected) continue;
+    removePendingForId(tracked.id);
+    const pending = createPendingElement(tracked.id, "block");
+    insertImageTextTranslation(tracked, pending);
+  }
 }
 
 export function clearTranslationPlaceholders(segments: TextSegment[]): void {
@@ -567,9 +646,114 @@ function clearNodeTracking(): void {
   trackedNodes = [];
   trackedGroups = [];
   trackedAttributes = [];
+  trackedImageTexts = [];
   protectedTokensById = new Map();
   sourceTextById = new Map();
   renderedById.clear();
+}
+
+function collectImageTextSegments(
+  root: Element,
+  visibility: RenderVisibilitySnapshot
+): TextSegment[] {
+  const trackedImages = new Set(trackedImageTexts.map((tracked) => tracked.image));
+  const candidates = [
+    ...(root.matches("img[alt]") ? [root] : []),
+    ...root.querySelectorAll("img[alt]")
+  ];
+  const segments: TextSegment[] = [];
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLImageElement) || trackedImages.has(candidate)) continue;
+    if (shouldSkipElement(candidate, true, visibility)
+      || !visibility.isElementVisuallyRendered(candidate)) continue;
+    const sourceValue = candidate.getAttribute("alt") ?? "";
+    // Promotional sites often render entire paragraphs as images and supply
+    // their text in alt. Ignore short labels such as logos and image buttons.
+    if (normalizeText(sourceValue).length < 80 || !/\p{L}/u.test(sourceValue)) continue;
+    const text = sourceValue.split(/\r?\n/).map(normalizeText).filter(Boolean).join("\n\n");
+    const id = `seg-${Date.now()}-${segmentIdCounter++}`;
+    trackedImageTexts.push({ id, image: candidate, sourceValue });
+    segments.push({ id, text, element: candidate });
+  }
+  return segments;
+}
+
+function insertImageTextTranslation(tracked: TrackedImageText, element: HTMLElement): void {
+  const image = tracked.image;
+  const anchor = image.closest("picture") ?? image;
+  const targetId = ensureTranslationTarget(image);
+  element.dataset.wupageMode = "block";
+  element.dataset.wupageContainer = "image-text";
+  element.setAttribute(TRANSLATION_TARGET_ATTR, targetId);
+  if (anchor.hasAttribute("slot")) element.setAttribute("slot", anchor.getAttribute("slot")!);
+  anchor.after(element);
+  image.setAttribute(TRANSLATED_ATTR, "true");
+}
+
+function renderInterleavedImageText(
+  tracked: TrackedImageText,
+  element: HTMLElement,
+  translation: string,
+  displayMode: TranslationDisplayMode
+): boolean {
+  const paragraphs = tracked.sourceValue.split(/\r?\n/).map(normalizeText).filter(Boolean);
+  const blocks = translation.split(/\r?\n\s*\r?\n/).map((text) => text.trim()).filter(Boolean);
+  const translated = blocks.length === paragraphs.length
+    ? blocks
+    : translation.split(/\r?\n/).map((text) => text.trim()).filter(Boolean);
+  if (translated.length !== paragraphs.length) return false;
+  tracked.waitingForImage = !tracked.image.complete;
+  const layout = readImageTextLayout(tracked.image, paragraphs.length);
+  if (!layout) return false;
+  const source = tracked.image.currentSrc || tracked.image.src;
+  element.dataset.wupageImageLayout = "interleaved";
+  element.style.color = layout.foreground;
+  element.style.setProperty("--wupage-image-font-size", `clamp(14px, ${layout.fontRatio * 100}cqw, 32px)`);
+  // The original is now represented by the individual image slices. Keep
+  // those alternatives accessible, hiding only the bilingual translation.
+  element.removeAttribute("aria-hidden");
+  paragraphs.forEach((text, index) => {
+    const row = document.createElement("span");
+    row.className = "wupage-image-text-row";
+    if (displayMode !== "replace") {
+      const slice = layout.slices[index];
+      const original = document.createElement("span");
+      original.className = "wupage-image-text-original";
+      original.style.aspectRatio = `${layout.width} / ${slice.bottom - slice.top}`;
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = text;
+      image.draggable = false;
+      image.style.transform = `translateY(${-slice.top / layout.height * 100}%)`;
+      original.append(image);
+      row.append(original);
+    }
+    const result = document.createElement("span");
+    result.className = "wupage-image-text-result";
+    result.textContent = translated[index];
+    if (displayMode !== "replace") result.setAttribute("aria-hidden", "true");
+    if (displayMode === "bilingual-accent") {
+      const channels = layout.foreground.match(/\d+/g)!.map(Number);
+      const background = channels.reduce((sum, value) => sum + value, 0) > 384
+        ? "rgb(23, 32, 38)" : "rgb(255, 255, 255)";
+      result.style.color = mapTranslationTextColor(layout.foreground, background) ?? layout.foreground;
+    }
+    row.append(result);
+    element.append(row);
+  });
+  if (!tracked.image.classList.contains(REPLACED_SOURCE_CLASS)) {
+    tracked.image.classList.add(REPLACED_SOURCE_CLASS);
+    tracked.replaced = true;
+  }
+  tracked.renderedSource = source;
+  return true;
+}
+
+function restoreImageTextSource(tracked: TrackedImageText): void {
+  if (tracked.replaced) tracked.image.classList.remove(REPLACED_SOURCE_CLASS);
+  tracked.replaced = false;
+  tracked.renderedSource = undefined;
+  tracked.waitingForImage = false;
 }
 
 function collectAttributeSegments(
@@ -625,6 +809,9 @@ function replaceTrackedSource(nodes: TrackedNode[], protectedTokenId?: string): 
 }
 
 function restoreReplacedSourcesIn(root: Element): void {
+  for (const tracked of trackedImageTexts) {
+    if (tracked.image === root || root.contains(tracked.image)) restoreImageTextSource(tracked);
+  }
   for (const tracked of trackedNodes) {
     if (!tracked.replaced || !tracked.node.parentElement) continue;
     if (tracked.node.parentElement !== root && !root.contains(tracked.node.parentElement)) continue;

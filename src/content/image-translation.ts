@@ -10,6 +10,7 @@ interface ImageEntry {
   canvas?: HTMLCanvasElement;
   busy: boolean;
   showing: boolean;
+  replaceSource?: boolean;
   generation: number;
   manual?: boolean;
   contextOccluder?: Element | null;
@@ -18,6 +19,9 @@ interface ImageEntry {
 }
 
 const HOST_ID = "wupage-image-tools";
+const SOURCE_MASK_ATTR = "data-wupage-image-source-mask";
+const SOURCE_STYLE_ID = "wupage-image-source-style";
+const maskedSources = new Map<HTMLElement, string | null>();
 const entries = new Map<HTMLImageElement, ImageEntry>();
 let host: HTMLDivElement | undefined;
 let root: ShadowRoot | undefined;
@@ -58,6 +62,7 @@ export function setImageTranslationEnabled(value: boolean): void {
   if (value === enabled) return;
   enabled = value;
   if (!enabled) {
+    restoreSourcePixels();
     observer?.disconnect(); resizeObserver?.disconnect();
     window.removeEventListener("scroll", scheduleLayout, true);
     window.removeEventListener("resize", scheduleScan);
@@ -74,6 +79,7 @@ export function setImageTranslationEnabled(value: boolean): void {
     scanTimer = undefined; frame = undefined;
     entries.forEach((entry) => { entry.generation += 1; });
     entries.clear(); host?.remove(); host = undefined; root = undefined;
+    document.getElementById(SOURCE_STYLE_ID)?.remove();
     return;
   }
   createHost();
@@ -95,6 +101,13 @@ export function setImageTranslationEnabled(value: boolean): void {
 }
 
 function createHost(): void {
+  const sourceStyle = document.createElement("style");
+  sourceStyle.id = SOURCE_STYLE_ID;
+  sourceStyle.textContent = `
+    img[${SOURCE_MASK_ATTR}="image"]{clip-path:inset(50%)!important}
+    [${SOURCE_MASK_ATTR}="background"]{background-image:none!important}
+  `;
+  document.documentElement.append(sourceStyle);
   host = document.createElement("div");
   host.id = HOST_ID;
   host.setAttribute("translate", "no");
@@ -281,6 +294,10 @@ function updateHover(): void {
 }
 
 function updateLayout(): void {
+  // Read the site's real styles before applying our pixel-only masks. In
+  // particular, background presentations must remain discoverable next frame.
+  restoreSourcePixels();
+  const replacements: HTMLElement[] = [];
   for (const entry of entries.values()) {
     const { image, button, status, canvas } = entry;
     entry.hoverBounds = undefined;
@@ -340,9 +357,22 @@ function updateLayout(): void {
         borderRadius: style.borderRadius, opacity: style.opacity, filter: style.filter,
         clipPath: `inset(${Math.max(0, top - cy)}px ${Math.max(0, cx + width - right)}px ${Math.max(0, cy + height - bottom)}px ${Math.max(0, left - cx)}px)`
       });
+      if (!canvas.hidden && entry.replaceSource) replacements.push(presentation);
     }
   }
+  for (const source of replacements) {
+    if (!maskedSources.has(source)) maskedSources.set(source, source.getAttribute(SOURCE_MASK_ATTR));
+    source.setAttribute(SOURCE_MASK_ATTR, source instanceof HTMLImageElement ? "image" : "background");
+  }
   updateHover();
+}
+
+function restoreSourcePixels(): void {
+  for (const [source, previous] of maskedSources) {
+    if (previous === null) source.removeAttribute(SOURCE_MASK_ATTR);
+    else source.setAttribute(SOURCE_MASK_ATTR, previous);
+  }
+  maskedSources.clear();
 }
 
 async function translateImage(entry: ImageEntry): Promise<void> {
@@ -359,12 +389,16 @@ async function translateImage(entry: ImageEntry): Promise<void> {
     const source = await readImage(entry.image);
     if (!current()) return;
     const result = await sendRuntimeRequest<TranslateImageResponse>({ type: "TRANSLATE_IMAGE",
-      dataUrl: source.toDataURL("image/png"), width: source.width, height: source.height });
+      dataUrl: source.toDataURL("image/png"), width: source.width, height: source.height,
+      sourceText: entry.image.alt.trim().slice(0, 12000) || undefined });
     if (!current()) return;
-    if (!result.regions.length) { entry.status.textContent = "未发现需要翻译的文字。"; return; }
+    if (!result.regions.length) {
+      entry.status.textContent = result.warning ?? "未能可靠识别需要翻译的文字。";
+      return;
+    }
     const canvas = document.createElement("canvas"); canvas.width = source.width; canvas.height = source.height;
     canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", result.regions.map((region) => region.translation).join("\n"));
-    renderImageTranslation(canvas, source, result.regions);
+    entry.replaceSource = renderImageTranslation(canvas, source, result.regions);
     entry.canvas = canvas; entry.showing = true; root!.prepend(canvas);
     entry.status.textContent = result.warning ?? "";
   } catch (error) {
