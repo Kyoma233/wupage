@@ -128,6 +128,7 @@ export interface TranslateImageRequest {
   dataUrl: string;
   width: number;
   height: number;
+  sourceText?: string;
 }
 
 export interface TranslateImageResponse {

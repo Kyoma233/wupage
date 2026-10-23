@@ -67,6 +67,8 @@ npm run build
 4. 如果只想翻译局部内容，开启「段落模式」，按住 `Ctrl` 点击段落。
 5. 当前标签页是在线 PDF 时，主操作会自动变为「翻译 PDF」并打开双栏工作区。
 
+全文翻译也会读取图片中提供的长段替代文字（`alt`）。对于能可靠识别段落间隔的透明文字图片，会按段显示原图文字与对应译文，保留原有字形和页面背景；译文替换模式只显示译文。普通图片仍保留原图，在下方显示翻译后的说明。恢复原文时还原原图。这不需要 OCR；没有提供这类文字的图片仍需使用图片翻译。
+
 更完整的服务商参数、缓存和性能选项位于扩展的「设置」页面。悬浮球可在不打开弹窗的情况下访问常用操作，Debug 面板则会显示翻译任务、请求状态与错误信息。
 
 ### 图片覆盖翻译
@@ -79,9 +81,11 @@ npm run build
 - 模型保存在此浏览器的扩展 Cache Storage 中，只有主动点击扳手才会下载。识别运行在独立的沙箱页面，闲置一分钟后释放运行实例；模型文件保留到用户删除或浏览器清理存储。OCR 运行库随扩展打包，不从远端加载执行代码。
 - 开关默认关闭。启用缓存时仅保存文字区域与译文，不保存原始图片数据；「清除缓存」会清除图片翻译结果，不删除 OCR 模型。
 - 当前支持网页中的静态 `<img>` 图片，过滤小图标；跨域图片通过扩展读取，要求图片可访问。鉴权、防盗链或特殊图片地址可能无法读取。超大图片会缩放，下载上限为 12 MB。
-- 原文区域使用图片像素采样的背景色覆盖。纯色背景效果更好；复杂纹理、斜排文字、密集小字和文字框定位可能不理想，目前不做背景无痕修复。动画、CSS 背景图、嵌入框架内部图片暂不保证支持。
+- 原文区域使用图片像素采样的背景色覆盖，透明底图片保留背景透明度与原字色。纯色背景效果更好；复杂纹理、斜排文字、密集小字和文字框定位可能不理想，目前不做背景无痕修复。动画、CSS 背景图、嵌入框架内部图片暂不保证支持。
+- 当前 OCR 模型支持简体中文、繁体中文、英文和日文。透明图片会使用独立副本调整识别底色，不改变原图透明度；艺术字、混合竖排和低对比度文字仍可能漏识别。提示会区分识别失败、过滤后的空结果与译文未变化，空结果不会缓存。
+- 对于宽幅透明文字图，同一行的相邻片段会合并翻译，并扫描原图补全覆盖范围内的引号、连接线和句号。图片的替代文字与识别出的全部字词一致时，使用它补全遗漏的标点。
 - 本地视觉回归页：运行开发预览服务后打开 `tests/fixtures/image-preview.html`，使用固定模型结果检查覆盖、切换、缩放与内部滚动，不调用外部 API。
-- OCR 实测页：先 `npm run build`，再 `node tests/fixtures/ocr-preview-server.mjs`，打开 `http://127.0.0.1:5175`，验证真实下载、安装、识别、状态持久化和删除。仅模拟扩展消息，OCR 模型、沙箱和校验使用生产实现。
+- OCR 实测页：先 `npm run build`，再 `node tests/fixtures/ocr-preview-server.mjs`，打开 `http://127.0.0.1:5175`，验证真实下载、安装、识别、状态持久化和删除。仅模拟扩展消息，OCR 模型、沙箱和校验使用生产实现。日文透明文字样例还支持真实翻译，以及使用固定译文的符号覆盖与断句回归。
 
 ## 翻译服务
 
@@ -193,6 +197,30 @@ git push origin main v1.1.0
 ```
 
 带预发布后缀的标签会自动创建 GitHub Prerelease。成功发布后，工作流还会触发项目网站的版本同步。
+
+### 自动同步到 Microsoft Edge Add-ons
+
+项目支持通过 [微软官方的 Edge Add-ons Publish API](https://learn.microsoft.com/en-us/microsoft-edge/extensions/update/api/using-addons-api) 自动上传 Release ZIP 并提交审核。扩展需要已在商店完成首次发布。
+
+首次配置：
+
+1. 登录 [Microsoft Partner Center](https://partner.microsoft.com/dashboard/microsoftedge/overview)，在 **Microsoft Edge → Publish API** 中启用使用 API Key 的新体验，并创建凭据，获取 **Client ID** 与 **API Key**。
+2. 打开扩展概览，在 **Extension identity** 中复制 **Product ID**。这是 Partner Center 中的 GUID，不是商店详情页中由字母组成的扩展 ID。
+3. 打开 GitHub 仓库 **Settings → Secrets and variables → Actions**，添加以下配置：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Variable | `EDGE_PRODUCT_ID` | 扩展的 Product ID；配置后启用正式版自动提交 |
+| Secret | `EDGE_CLIENT_ID` | Publish API 提供的 Client ID |
+| Secret | `EDGE_API_KEY` | Publish API 提供的 API Key |
+
+以后照常推送正式版 `v*` 标签：工作流创建 GitHub Release 后，直接调用商店发布工作流，下载该 Release 的原始 ZIP 与 SHA-256 校验文件，验证校验和及 Manifest 版本，上传 ZIP，等待上传成功，再提交微软审核并检查提交结果。使用的是 v1.1 的 API Key 认证（`Authorization: ApiKey ...`、`X-ClientID`），无需配置旧版 Access Token URL 或 Client Secret。
+
+- 未配置 `EDGE_PRODUCT_ID` 时自动跳过商店提交；配置后缺少凭据会明确报错。预发布版本不提交商店。
+- 商店发布与网站同步分别执行；GitHub Release 已创建时，网站同步失败不会阻止商店提交。
+- 自动化成功表示已提交审核，上线仍需等待微软审核及商店分发。已有版本正在审核时，微软可能拒绝新的提交；处理完成后再重试。
+- 如果仅商店提交失败，可在 GitHub **Actions → Publish to Microsoft Edge Add-ons → Run workflow** 中输入已有正式版标签，单独重试，无需重建 Release。若之前提交超时，请先在 Partner Center 确认是否已经受理。
+- API Key 有有效期，请按 Partner Center 显示的到期时间更新 `EDGE_API_KEY`；Client ID 如有变化也需同步更新。商店简介、截图等元数据仍需在 Partner Center 维护。
 
 </details>
 

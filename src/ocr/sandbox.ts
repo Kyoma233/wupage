@@ -1,5 +1,7 @@
 import { PaddleOCR } from "@paddleocr/paddleocr-js";
 import { OCR_MODELS } from "../shared/ocr";
+import { prepareOcrInput } from "./image-input";
+import { refineOcrTextStrips } from "./text-lines";
 
 let engine: Awaited<ReturnType<typeof PaddleOCR.create>> | undefined;
 window.addEventListener("message", (event) => {
@@ -25,8 +27,8 @@ window.addEventListener("message", (event) => {
     if (!engine || action !== "recognize") throw new Error("OCR 尚未初始化。");
     const bitmap = await createImageBitmap(await (await fetch(data.dataUrl)).blob());
     try {
-      const [result] = await engine.predict(bitmap, { textDetLimitSideLen: 1600, textDetLimitType: "max", textRecScoreThresh: 0.6 });
-      return result.items;
+      const [result] = await engine.predict(prepareOcrInput(bitmap), { textDetLimitSideLen: 1600, textDetLimitType: "max", textRecScoreThresh: 0.6 });
+      return refineOcrTextStrips(result.items, bitmap);
     } finally { bitmap.close(); }
   })().then(
     (result) => parent.postMessage({ target: "wupage-ocr-result", id, result }, "*"),

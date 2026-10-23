@@ -15,7 +15,13 @@ createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, "http://localhost").pathname;
     response.setHeader("Access-Control-Allow-Origin", "*");
+    response.setHeader("Cache-Control", "no-store");
     if (pathname === "/") { response.setHeader("Content-Type", "text/html; charset=utf-8"); response.end(html); return; }
+    if (["/samples/text_lead.png", "/samples/bnr_mediamix.png"].includes(pathname)) {
+      const sample = await fetch(`https://www.madoka-magica.com/wr/assets/img/${pathname.split("/").at(-1)}`);
+      response.writeHead(sample.status, { "Content-Type": "image/png" });
+      response.end(Buffer.from(await sample.arrayBuffer())); return;
+    }
     const file = pathname.startsWith("/dist/") ? resolve(root, `.${pathname}`) : resolve(output, `.${pathname}`);
     if (!file.startsWith(resolve(root, "dist") + sep) && !file.startsWith(output + sep)) { response.writeHead(403).end(); return; }
     const mime = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".html": "text/html" }[extname(file)];

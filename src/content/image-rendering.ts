@@ -22,9 +22,12 @@ export function wrapImageText(context: Pick<CanvasRenderingContext2D, "measureTe
   return lines;
 }
 
-export function renderImageTranslation(canvas: HTMLCanvasElement, source: CanvasImageSource, regions: ImageTextRegion[]): void {
+// Returns whether the overlay needs to replace the source pixels. Transparent
+// erasures would otherwise reveal the original lettering beneath the canvas.
+export function renderImageTranslation(canvas: HTMLCanvasElement, source: CanvasImageSource, regions: ImageTextRegion[]): boolean {
   const context = canvas.getContext("2d", { willReadFrequently: regions.some((region) => region.sampleColors) });
   if (!context) throw new Error("浏览器无法绘制图片译文。");
+  context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(source, 0, 0, canvas.width, canvas.height);
   // Sample before drawing any overlays so adjacent regions do not sample a translation.
   const palettes = regions.map((region) => region.sampleColors ? sampleRegionColors(context, region, canvas.width, canvas.height) : region);
@@ -39,8 +42,11 @@ export function renderImageTranslation(canvas: HTMLCanvasElement, source: Canvas
     context.beginPath();
     context.rect(x, y, width, height);
     context.clip();
-    context.fillStyle = palettes[index].background;
-    context.fillRect(x, y, width, height);
+    context.clearRect(x, y, width, height);
+    if (palettes[index].background !== "transparent") {
+      context.fillStyle = palettes[index].background;
+      context.fillRect(x, y, width, height);
+    }
     context.fillStyle = palettes[index].foreground;
     context.textBaseline = "top";
     context.textAlign = region.align;
@@ -66,6 +72,7 @@ export function renderImageTranslation(canvas: HTMLCanvasElement, source: Canvas
     lines.forEach((line, index) => context.fillText(line, left, top + index * fontSize * 1.2));
     context.restore();
   }
+  return palettes.some((palette) => palette.background === "transparent" || palette.background.startsWith("rgba("));
 }
 
 function sampleRegionColors(context: CanvasRenderingContext2D, region: ImageTextRegion, imageWidth: number, imageHeight: number): Pick<ImageTextRegion, "foreground" | "background"> {
@@ -75,18 +82,46 @@ function sampleRegionColors(context: CanvasRenderingContext2D, region: ImageText
   const width = Math.min(imageWidth - left, Math.max(1, Math.ceil(w * imageWidth / 1000)));
   const height = Math.min(imageHeight - top, Math.max(1, Math.ceil(h * imageHeight / 1000)));
   const { data } = context.getImageData(left, top, width, height);
-  const counts = new Map<string, { count: number; rgb: number[] }>();
+  const counts = new Map<string, { count: number; channels: number[] }>();
+  let transparent = 0;
+  let transparentEdges = 0;
+  let edges = 0;
   for (let offset = 0; offset < data.length; offset += 4) {
-    const rgb = [data[offset], data[offset + 1], data[offset + 2]];
-    const key = rgb.map((value) => Math.round(value / 16)).join(",");
+    const pixel = offset / 4;
+    const edge = pixel < width || pixel >= width * (height - 1) || pixel % width === 0 || pixel % width === width - 1;
+    if (edge) edges++;
+    // RGB channels of transparent pixels are not a visible background color.
+    if (data[offset + 3] < 16) {
+      transparent++;
+      if (edge) transparentEdges++;
+      continue;
+    }
+    const channels = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+    const key = channels.map((value) => Math.round(value / 16)).join(",");
     const entry = counts.get(key);
-    if (entry) entry.count += 1; else counts.set(key, { count: 1, rgb });
+    if (entry) {
+      entry.count++;
+      channels.forEach((value, index) => entry.channels[index] += value);
+    } else counts.set(key, { count: 1, channels });
   }
-  const colors = [...counts.values()].sort((a, b) => b.count - a.count);
-  const background = colors[0]?.rgb ?? [255, 255, 255];
-  const distance = (rgb: number[]) => rgb.reduce((sum, value, index) => sum + (value - background[index]) ** 2, 0);
+  const colors = [...counts.values()].map((entry) => ({
+    count: entry.count,
+    channels: entry.channels.map((value) => Math.round(value / entry.count))
+  })).sort((a, b) => b.count - a.count);
+  const clearBackground = transparent >= width * height * 0.5
+    || (transparent >= width * height * 0.1 && transparentEdges >= edges * 0.5);
+  const background = colors[0]?.channels ?? [255, 255, 255, 255];
+  const distance = (channels: number[]) => channels.slice(0, 3)
+    .reduce((sum, value, index) => sum + (value - background[index]) ** 2, 0);
   const foreground = colors.filter((entry) => entry.count >= Math.max(2, width * height * 0.005))
-    .sort((a, b) => distance(b.rgb) - distance(a.rgb))[0]?.rgb ?? [17, 17, 17];
-  const hex = (rgb: number[]) => `#${rgb.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
-  return { foreground: hex(foreground), background: hex(background) };
+    .sort((a, b) => clearBackground
+      ? b.count * b.channels[3] - a.count * a.channels[3]
+      : distance(b.channels) - distance(a.channels))[0]?.channels;
+  const cssColor = (channels: number[]) => channels[3] === 255
+    ? `#${channels.slice(0, 3).map((value) => value.toString(16).padStart(2, "0")).join("")}`
+    : `rgba(${channels.slice(0, 3).join(", ")}, ${channels[3] / 255})`;
+  return {
+    foreground: foreground ? cssColor(foreground) : region.foreground,
+    background: clearBackground ? "transparent" : cssColor(background)
+  };
 }

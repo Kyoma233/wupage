@@ -52,11 +52,46 @@ describe("local OCR image translation", () => {
   });
   it("does not cover unchanged translations or send purely numeric labels", async () => {
     vi.mocked(translateWithSettings).mockResolvedValue({ translations: ["Cache performance"], cached: 0 });
-    expect((await translateImageWithSettings(settings, request)).regions).toEqual([]);
+    const result = await translateImageWithSettings(settings, request);
+    expect(result.regions).toEqual([]);
+    expect(result.warning).toContain("已识别 1 处文字");
+    expect(result.warning).toContain("译文与原文相同");
     for (const value of ["41.7%", "0.91x", "1.3T", "100%", "320B", "2026", "−20%"])
       expect(needsImageTranslation(value), value).toBe(false);
     expect(needsImageTranslation("2 projects")).toBe(true);
     expect(needsImageTranslation("API keys")).toBe(true);
+  });
+  it("reports recognition failure separately and does not cache an empty result", async () => {
+    vi.mocked(recognizeImage).mockResolvedValue({ revision: "v1", lines: [] });
+    const result = await translateImageWithSettings(settings, request);
+
+    expect(result.regions).toEqual([]);
+    expect(result.warning).toContain("未能可靠识别");
+    expect(Object.keys(stored)).toHaveLength(0);
+    await translateImageWithSettings(settings, request);
+    expect(recognizeImage).toHaveBeenCalledTimes(2);
+    expect(translateWithSettings).not.toHaveBeenCalled();
+  });
+  it("reports recognized numbers separately from recognition failure", async () => {
+    vi.mocked(recognizeImage).mockResolvedValue({ revision: "v1", lines: [
+      { text: "41.7%", score: .99, poly: [[100,100],[300,100],[300,125],[100,125]] }
+    ] });
+    const result = await translateImageWithSettings(settings, request);
+
+    expect(result.warning).toContain("已检测到文字");
+    expect(result.warning).toContain("数字");
+    expect(translateWithSettings).not.toHaveBeenCalled();
+  });
+  it("retries a stale empty image cache entry instead of reusing recognition failure", async () => {
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async (key: string) => ({ [key]: { regions: [] } }), set: async () => {}
+    } } });
+
+    const result = await translateImageWithSettings(settings, request);
+
+    expect(result.cached).toBe(false);
+    expect(result.regions).toHaveLength(1);
+    expect(recognizeImage).toHaveBeenCalledTimes(1);
   });
   it("discards a translation completed after model removal", async () => {
     vi.mocked(installedRevision).mockResolvedValueOnce("v1").mockResolvedValue(undefined);
@@ -66,5 +101,21 @@ describe("local OCR image translation", () => {
   it("rejects malformed image sizes before recognizing", async () => {
     await expect(translateImageWithSettings(settings, { ...request, width: -1 })).rejects.toThrow("尺寸");
     expect(recognizeImage).not.toHaveBeenCalled();
+  });
+
+  it("restores matching source punctuation and gives all image text as translation context", async () => {
+    vi.mocked(recognizeImage).mockResolvedValue({ revision: "v1", lines: [
+      { text: "New feature", score: .99, poly: [[10,10],[300,10],[300,40],[10,40]] },
+      { text: "Quoted title continues", score: .99, poly: [[10,50],[800,50],[800,80],[10,80]] }
+    ] });
+    vi.mocked(translateWithSettings).mockResolvedValue({ translations: ["新功能。", "《书名》仍在继续！"], cached: 0 });
+
+    await translateImageWithSettings(settings, { ...request, sourceText: "New feature. 『Quoted title』 continues!" });
+
+    expect(translateWithSettings).toHaveBeenCalledWith(settings, expect.objectContaining({
+      texts: ["New feature.", "『Quoted title』 continues!"],
+      context: expect.stringContaining("New feature.\n『Quoted title』 continues!")
+    }));
+    expect(JSON.stringify(vi.mocked(translateWithSettings).mock.calls)).not.toContain("base64");
   });
 });

@@ -102,10 +102,11 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
     subtree: true,
     characterData: true,
     attributes: true,
-    attributeFilter: ["class", "style", "hidden", "aria-hidden", "placeholder", "open"]
+    attributeFilter: ["class", "style", "hidden", "aria-hidden", "placeholder", "alt", "open"]
   });
   window.addEventListener("scroll", handleViewportChange, { passive: true, capture: true });
   window.addEventListener("resize", handleViewportChange, { passive: true });
+  document.addEventListener("load", handleImageLoad, true);
   scheduleNearbySegments(session, true);
   resolveInitialIfReady(session);
   return initialPromise;
@@ -218,6 +219,10 @@ async function runBatch(session: TranslationSession, segments: TextSegment[]): P
       resolveInitialIfReady(session);
     }
   }
+}
+
+function handleImageLoad(event: Event): void {
+  if (event.target instanceof HTMLImageElement) handleViewportChange();
 }
 
 function handleViewportChange(): void {
@@ -427,6 +432,7 @@ function cancelActiveSession(): void {
   }
   window.removeEventListener("scroll", handleViewportChange, true);
   window.removeEventListener("resize", handleViewportChange);
+  document.removeEventListener("load", handleImageLoad, true);
   if (!session) return;
   session.observer.disconnect();
   session.dynamicRoots.clear();

@@ -67,6 +67,74 @@ describe("viewport page translation", () => {
     });
   }
 
+  function mountImageText(top = 100): HTMLImageElement {
+    document.body.innerHTML = `<div id="intro" data-top="${top}"><picture><img></picture></div>`;
+    const image = document.querySelector("img")!;
+    image.alt = "これは画像として表示される長い作品紹介文です。".repeat(5);
+    return image;
+  }
+
+  it("translates image paragraphs on scroll without enabling OCR", async () => {
+    const image = mountImageText(2500);
+    translateNormally();
+    await startPageTranslation(settings);
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    scrollOffset = 2100;
+    window.dispatchEvent(new Event("scroll"));
+
+    await vi.waitFor(() => expect(image.closest("picture")!.nextElementSibling?.textContent)
+      .toBe(`译文：${image.alt}`));
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 220));
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("retranslates changed image alt text without keeping the previous output", async () => {
+    const image = mountImageText();
+    translateNormally();
+    await startPageTranslation(settings);
+    image.alt = "更新後の画像には、新しい作品紹介文が表示されています。".repeat(5);
+
+    await vi.waitFor(() => expect(image.closest("picture")!.nextElementSibling?.textContent)
+      .toBe(`译文：${image.alt}`));
+    expect(document.querySelectorAll(".wupage-translation")).toHaveLength(1);
+  });
+
+  it("discards an image translation response if its alt changes during the request", async () => {
+    const image = mountImageText();
+    let release!: (response: TranslateBatchResponse) => void;
+    vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const completion = startPageTranslation(settings);
+    image.alt = "新しい画像の文章だけを翻訳し、古い画像の翻訳は表示しません。".repeat(5);
+    translateNormally();
+    release({ translations: ["过期的图片译文"], cached: 0 });
+    await completion;
+
+    await vi.waitFor(() => expect(image.closest("picture")!.nextElementSibling?.textContent)
+      .toBe(`译文：${image.alt}`));
+    expect(document.body.textContent).not.toContain("过期的图片译文");
+    expect(document.querySelectorAll(".wupage-translation")).toHaveLength(1);
+  });
+
+  it("discovers image text when loading creates its first rendered area", async () => {
+    const image = mountImageText();
+    let loaded = false;
+    const originalRect = image.getBoundingClientRect.bind(image);
+    vi.spyOn(image, "getBoundingClientRect").mockImplementation(() => loaded
+      ? originalRect()
+      : { width: 0, height: 0 } as DOMRect);
+    translateNormally();
+    await startPageTranslation(settings);
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    loaded = true;
+    image.dispatchEvent(new Event("load"));
+
+    await vi.waitFor(() => expect(image.closest("picture")!.nextElementSibling?.textContent)
+      .toBe(`译文：${image.alt}`));
+  });
+
   it("discovers previously occluded email text after a non-bubbling inner scroll", async () => {
     document.body.innerHTML = `<div role="main"><div id="scroller"><p>Visible email.</p>
       <p id="covered">Previously covered email body.</p></div></div><div id="overlay"></div>`;
