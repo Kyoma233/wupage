@@ -1,3 +1,5 @@
+import { protectPdfMath, type PdfFormula, type PdfTextMeasure } from "./math";
+
 export interface PdfTextItemLike {
   str: string;
   transform: ArrayLike<number>;
@@ -6,6 +8,11 @@ export interface PdfTextItemLike {
   hasEOL?: boolean;
   fontFamily?: string;
   fontWeight?: number;
+  fontName?: string;
+  fontFace?: string;
+  fontAscent?: number;
+  fontDescent?: number;
+  preserveOriginal?: boolean;
 }
 
 export interface PdfTextLine {
@@ -24,6 +31,8 @@ export interface PdfTextBlock {
   fontFamily: string;
   fontWeight: number;
   fontSize: number;
+  preserveOriginal?: boolean;
+  formulas?: PdfFormula[];
 }
 
 interface TextLine {
@@ -34,19 +43,86 @@ interface TextLine {
   height: number;
   fontFamily: string;
   fontWeight: number;
+  preserveOriginal?: boolean;
+}
+
+export function normalizePdfTextItems(
+  items: ReadonlyArray<PdfTextItemLike>,
+  viewport: { height: number; transform?: ArrayLike<number> }
+): PdfTextItemLike[] {
+  const v = viewport.transform;
+  if (!v) return [...items];
+  // Store text in the displayed page's Cartesian coordinates. PDF rotation,
+  // nonzero crop origins and UserUnit must affect glyphs and crops equally.
+  return items.map((item) => {
+    const [a, b, c, d, x, y] = Array.from(item.transform);
+    return {
+      ...item,
+      transform: [
+        v[0] * a + v[2] * b, -(v[1] * a + v[3] * b),
+        v[0] * c + v[2] * d, -(v[1] * c + v[3] * d),
+        v[0] * x + v[2] * y + v[4], viewport.height - (v[1] * x + v[3] * y + v[5])
+      ],
+      width: (item.width ?? 0) * Math.hypot(v[0], v[1]),
+      height: (item.height || Math.hypot(c, d)) * Math.hypot(v[0], v[1])
+    };
+  });
 }
 
 export function extractTextBlocks(
   items: ReadonlyArray<PdfTextItemLike>,
-  pageNumber: number
+  pageNumber: number,
+  measure?: PdfTextMeasure
 ): PdfTextBlock[] {
-  const lines = collectLines(items);
+  const protectedMath = protectPdfMath(items.map(preserveRotatedText), measure);
+  const lines = collectLines(protectedMath.items);
   return collectParagraphs(lines)
-    .map((block, index) => ({
-      ...block,
-      id: `page-${pageNumber}-text-${index + 1}`,
-      translatable: isTranslatableText(block.text)
-    }));
+    .map((block, index) => {
+      const formulas = protectedMath.formulas.filter((formula) => block.text.includes(formula.placeholder));
+      if (formulas.length === 1 && (block.preserveOriginal || block.text.trim() === formulas[0].placeholder)) {
+        const formula = formulas[0];
+        block.preserveOriginal = true;
+        const height = formula.height / 1.14;
+        block.lines = [{ text: formula.text, x: formula.x, baselineY: formula.y + height * 0.24, width: formula.width, height }];
+        block.text = formula.text;
+      }
+      return {
+        ...block,
+        id: `page-${pageNumber}-text-${index + 1}`,
+        translatable: !block.preserveOriginal && isTranslatableText(block.text.replace(/⟪WUPAGE\d+⟫/gu, "")),
+        ...(formulas.some((formula) => !formula.display) ? { formulas: formulas.filter((formula) => !formula.display) } : {})
+      };
+    });
+}
+
+// Reflowing an angled chart label as horizontal text damages the figure. Keep
+// its original pixels, using the four transformed corners for its bounds.
+function preserveRotatedText(item: PdfTextItemLike): PdfTextItemLike {
+  const a = Number(item.transform[0]);
+  const b = Number(item.transform[1]);
+  const length = Math.hypot(a, b);
+  if (!length || (a > 0 && Math.abs(b / length) < 0.01)) return item;
+  const cosine = a / length;
+  const sine = b / length;
+  const size = item.height || Math.hypot(Number(item.transform[2]), Number(item.transform[3])) || 10;
+  const width = item.width || 0;
+  const x = Number(item.transform[4]);
+  const y = Number(item.transform[5]);
+  const corners = [0, width].flatMap((advance) => [-0.24 * size, 0.9 * size].map((rise) => ({
+    x: x + advance * cosine - rise * sine,
+    y: y + advance * sine + rise * cosine
+  })));
+  const padding = size * 0.15;
+  const left = Math.min(...corners.map((point) => point.x)) - padding;
+  const bottom = Math.min(...corners.map((point) => point.y)) - padding;
+  const height = (Math.max(...corners.map((point) => point.y)) + padding - bottom) / 1.14;
+  return {
+    ...item,
+    transform: [1, 0, 0, height, left, bottom + height * 0.24],
+    width: Math.max(...corners.map((point) => point.x)) + padding - left,
+    height,
+    preserveOriginal: true
+  };
 }
 
 function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
@@ -70,8 +146,9 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
       ? isSameVisualLine(current, y, height) && hasLargeHorizontalGap(current, x)
       : false;
     const movedToAnotherLine = current
-      ? Math.abs(current.y - y) > Math.max(2.5, Math.min(current.height, height) * 0.55)
-        || x + 2 < previousX
+      ? current.preserveOriginal || item.preserveOriginal
+        || Math.abs(current.y - y) > Math.max(2.5, Math.min(current.height, height) * 0.55)
+        || x + (/^⟪WUPAGE\d+⟫$/u.test(text) ? Math.max(2, height * 0.5) : 2) < previousX
         || previousEndedLine
         || separatedOnSameLine
       : false;
@@ -84,7 +161,8 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
         right: x + width,
         height,
         fontFamily: item.fontFamily || "Arial, sans-serif",
-        fontWeight: item.fontWeight ?? 400
+        fontWeight: item.fontWeight ?? 400,
+        ...(item.preserveOriginal ? { preserveOriginal: true } : {})
       };
       lines.push(current);
     } else {
@@ -133,7 +211,8 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
       lines: normalizedLines,
       fontFamily: current[0].fontFamily,
       fontWeight: Math.max(...current.map((line) => line.fontWeight)),
-      fontSize: Math.max(...current.map((line) => line.height))
+      fontSize: Math.max(...current.map((line) => line.height)),
+      ...(current.some((line) => line.preserveOriginal) ? { preserveOriginal: true } : {})
     });
     current = [];
   };
@@ -148,6 +227,7 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
 }
 
 function canJoinParagraph(previous: TextLine, next: TextLine): boolean {
+  if (previous.preserveOriginal || next.preserveOriginal) return false;
   const verticalGap = Math.abs(previous.y - next.y);
   const averageHeight = (previous.height + next.height) / 2;
   const sameColumn = Math.abs(previous.x - next.x) <= Math.max(18, averageHeight * 1.7);

@@ -1,3 +1,5 @@
+import { paintFormulaText } from "./math-rendering";
+
 export interface RasterPdfPage {
   width: number;
   height: number;
@@ -50,10 +52,15 @@ export function paintTranslationLayer(
   context: CanvasRenderingContext2D,
   translationLayer: HTMLElement
 ): void {
+  const coordinateScale = Number(translationLayer.dataset.coordinateScale) || 1;
+  if (coordinateScale !== 1) {
+    context.save();
+    context.scale(1 / coordinateScale, 1 / coordinateScale);
+  }
   translationLayer.querySelectorAll<HTMLElement>(".translation-block").forEach((block) => {
     const textElement = block.querySelector<HTMLElement>(".translation-block-text");
     const text = textElement?.textContent ?? "";
-    if (!textElement || !text.trim()) return;
+    if (!textElement || (!text.trim() && !textElement.querySelector(".pdf-inline-formula"))) return;
 
     const left = numericStyle(block.style.left);
     const top = numericStyle(block.style.top);
@@ -72,6 +79,11 @@ export function paintTranslationLayer(
     context.fillStyle = textElement.style.color || "#202826";
     context.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
     context.textBaseline = "top";
+    if (textElement.getBoundingClientRect().width > 0 || textElement.querySelector(".pdf-inline-formula")) {
+      paintFormulaText(context, translationLayer, textElement);
+      context.restore();
+      return;
+    }
     const lines = wrapCanvasText(context, text, width);
     const maximumLines = Math.max(1, Math.ceil(height / lineHeight));
     const textOffset = Math.max(0, (lineHeight - fontSize) / 2);
@@ -80,6 +92,7 @@ export function paintTranslationLayer(
     });
     context.restore();
   });
+  if (coordinateScale !== 1) context.restore();
 }
 
 export function wrapCanvasText(

@@ -49,7 +49,7 @@ describe("popup language controls", () => {
     });
 
     await import("../src/popup/index");
-    await vi.waitFor(() => expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译 PDF"));
+    await vi.waitFor(() => expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译PDF"));
     expect(sendTabMessage).not.toHaveBeenCalled();
 
     const source = query<HTMLSelectElement>("#sourceLang");
@@ -58,7 +58,9 @@ describe("popup language controls", () => {
     expect(target.value).toBe("zh-CN");
     expect(query<HTMLSelectElement>("#translationDisplayMode").selectedOptions[0]?.textContent)
       .toBe("原色对照");
-    expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译 PDF");
+    expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译PDF");
+    expect(query<HTMLButtonElement>("#pageToggle").closest(".actions")?.querySelectorAll("button")).toHaveLength(1);
+    expect(document.querySelector("#openPdf")).toBeNull();
     expect(document.querySelector("#pdfTranslate")).toBeNull();
     const imageToggle = query<HTMLButtonElement>("#imageTranslation");
     expect(imageToggle.getAttribute("aria-pressed")).toBe("false");
@@ -98,7 +100,7 @@ describe("popup language controls", () => {
     });
   });
 
-  it("does not message Edge settings and extension-internal pages", async () => {
+  it.each(["edge://extensions/", undefined])("disables translation on unsupported tabs: %s", async (url) => {
     document.open();
     document.write(readFileSync(resolve(process.cwd(), "popup.html"), "utf8"));
     document.close();
@@ -115,7 +117,7 @@ describe("popup language controls", () => {
         getURL: (path: string) => `chrome-extension://test-extension/${path}`
       },
       tabs: {
-        query: vi.fn(async () => [{ id: 2, url: "edge://extensions/" }]),
+        query: vi.fn(async () => [{ id: 2, url }]),
         sendMessage: sendTabMessage,
         create: vi.fn()
       }
@@ -124,7 +126,7 @@ describe("popup language controls", () => {
     await import("../src/popup/index");
     await vi.waitFor(() => {
       expect(query<HTMLElement>("#status").textContent)
-        .toBe("此页面不支持全文翻译，可点击“打开 PDF”导入文档。");
+        .toBe("此页面不支持翻译，请切换到网页或 PDF。");
     });
 
     expect(query<HTMLButtonElement>("#pageToggle").disabled).toBe(true);
@@ -132,54 +134,73 @@ describe("popup language controls", () => {
     expect(query<HTMLButtonElement>("#debug").disabled).toBe(true);
     expect(sendTabMessage).not.toHaveBeenCalled();
 
-    vi.spyOn(window, "close").mockImplementation(() => undefined);
-    const openPdf = query<HTMLButtonElement>("#openPdf");
-    expect(openPdf.disabled).toBe(false);
-    openPdf.click();
-    await vi.waitFor(() => expect(chrome.tabs.create).toHaveBeenCalledWith({
-      url: "chrome-extension://test-extension/pdf.html"
-    }));
+    expect(document.querySelector("#openPdf")).toBeNull();
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
   });
 
-  it.each(["file:///C:/Documents/Annual%20report.PDF#page=2", undefined])(
-    "opens a PDF workspace when the active tab is %s", async (url) => {
-      document.open();
-      document.write(readFileSync(resolve(process.cwd(), "popup.html"), "utf8"));
-      document.close();
-      const sendMessage = vi.fn(async (request: RuntimeRequest): Promise<RuntimeResponse> => {
-        if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "installed", total: 100, downloaded: 100 } };
-        if (request.type === "GET_SETTINGS") return { ok: true, data: structuredClone(DEFAULT_SETTINGS) };
-        return { ok: true };
-      });
-      const createTab = vi.fn(async () => undefined);
-      const sendToTab = vi.fn();
-      vi.stubGlobal("chrome", {
-        runtime: { sendMessage, getURL: (path: string) => `chrome-extension://test-extension/${path}` },
-        tabs: { query: vi.fn(async () => [{ id: 3, url }]), sendMessage: sendToTab, create: createTab }
-      });
-      vi.spyOn(window, "close").mockImplementation(() => undefined);
+  it("uses the same button to automatically translate a local PDF", async () => {
+    const url = "file:///C:/Documents/Annual%20report.PDF#page=2";
+    document.open();
+    document.write(readFileSync(resolve(process.cwd(), "popup.html"), "utf8"));
+    document.close();
+    const sendMessage = vi.fn(async (request: RuntimeRequest): Promise<RuntimeResponse> => {
+      if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "installed", total: 100, downloaded: 100 } };
+      if (request.type === "GET_SETTINGS") return { ok: true, data: structuredClone(DEFAULT_SETTINGS) };
+      return { ok: true };
+    });
+    const createTab = vi.fn(async () => undefined);
+    const sendToTab = vi.fn();
+    vi.stubGlobal("chrome", {
+      runtime: { sendMessage, getURL: (path: string) => `chrome-extension://test-extension/${path}` },
+      tabs: { query: vi.fn(async () => [{ id: 3, url }]), sendMessage: sendToTab, create: createTab }
+    });
+    vi.spyOn(window, "close").mockImplementation(() => undefined);
 
-      await import("../src/popup/index");
-      await vi.waitFor(() => expect(query<HTMLSelectElement>("#provider").options.length).toBeGreaterThan(0));
-      if (url) {
-        const translate = query<HTMLButtonElement>("#pageToggle");
-        expect(translate.textContent).toBe("翻译 PDF");
-        expect(translate.disabled).toBe(false);
-        translate.click();
-        await vi.waitFor(() => expect(createTab).toHaveBeenCalledWith({
-          url: `chrome-extension://test-extension/pdf.html?url=${encodeURIComponent(url)}&translate=1`
-        }));
-        createTab.mockClear();
-      } else {
-        expect(query<HTMLButtonElement>("#pageToggle").disabled).toBe(true);
-      }
-      query<HTMLButtonElement>("#openPdf").click();
-      await vi.waitFor(() => expect(createTab).toHaveBeenCalledWith({
-        url: "chrome-extension://test-extension/pdf.html"
-      }));
-      expect(sendToTab).not.toHaveBeenCalled();
-    }
-  );
+    await import("../src/popup/index");
+    const translate = query<HTMLButtonElement>("#pageToggle");
+    await vi.waitFor(() => expect(translate.disabled).toBe(false));
+    expect(translate.textContent).toBe("翻译PDF");
+    translate.click();
+    await vi.waitFor(() => expect(createTab).toHaveBeenCalledWith({
+      url: `chrome-extension://test-extension/pdf.html?url=${encodeURIComponent(url)}&translate=1`
+    }));
+    expect(sendToTab).not.toHaveBeenCalled();
+  });
+
+  it("uses the same button to translate a web page and restore its original text", async () => {
+    document.open();
+    document.write(readFileSync(resolve(process.cwd(), "popup.html"), "utf8"));
+    document.close();
+    const sendMessage = vi.fn(async (request: RuntimeRequest): Promise<RuntimeResponse> => {
+      if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "installed", total: 100, downloaded: 100 } };
+      if (request.type === "GET_SETTINGS") return { ok: true, data: structuredClone(DEFAULT_SETTINGS) };
+      return { ok: true };
+    });
+    const sendToTab = vi.fn(async (_tabId: number, request: RuntimeRequest): Promise<RuntimeResponse> => {
+      if (request.type === "GET_PARAGRAPH_MODE") return { ok: true, data: { enabled: false } };
+      if (request.type === "GET_TRANSLATION_STATE") return { ok: true, data: { translated: false } };
+      if (request.type === "TRANSLATE_PAGE") return { ok: true, data: { translated: 2, cached: 0 } };
+      if (request.type === "CLEAR_TRANSLATION") return { ok: true, data: { cleared: true } };
+      return { ok: true };
+    });
+    const createTab = vi.fn();
+    vi.stubGlobal("chrome", {
+      runtime: { sendMessage },
+      tabs: { query: vi.fn(async () => [{ id: 4, url: "https://example.com/article" }]), sendMessage: sendToTab, create: createTab }
+    });
+    await import("../src/popup/index");
+    const translate = query<HTMLButtonElement>("#pageToggle");
+    await vi.waitFor(() => expect(translate.disabled).toBe(false));
+    expect(translate.textContent).toBe("翻译全文");
+    expect(document.querySelector("#openPdf")).toBeNull();
+    translate.click();
+    await vi.waitFor(() => expect(translate.textContent).toBe("显示全文"));
+    expect(sendToTab).toHaveBeenCalledWith(4, { type: "TRANSLATE_PAGE" });
+    translate.click();
+    await vi.waitFor(() => expect(translate.textContent).toBe("翻译全文"));
+    expect(sendToTab).toHaveBeenCalledWith(4, { type: "CLEAR_TRANSLATION" });
+    expect(createTab).not.toHaveBeenCalled();
+  });
 });
 
 function query<T extends Element>(selector: string): T {

@@ -3,13 +3,138 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createEditableTranslationBlock } from "../src/pdf/editor";
+import { createEditableTranslationBlock, fitTranslationBlock } from "../src/pdf/editor";
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 describe("editable PDF translation blocks", () => {
+  it("does not turn an empty range at viewport origin into a large top inset", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, {
+      id: "empty-range", text: "译文必须保持可见", color: "#222", fontFamily: "Arial", fontSize: 16,
+      fontWeight: 400, lineHeight: 20, left: 0, top: 500, width: 200, height: 20
+    });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    Object.defineProperties(text, {
+      clientWidth: { get: () => 200 }, clientHeight: { get: () => 20 }, scrollWidth: { get: () => 200 },
+      scrollHeight: { get: () => 20 + (Number.parseFloat(text.style.paddingTop) || 0) }
+    });
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ width: 200, top: 500 } as DOMRect);
+    vi.spyOn(document, "createRange").mockReturnValue({
+      selectNodeContents: vi.fn(), getBoundingClientRect: () => new DOMRect()
+    } as unknown as Range);
+    fitTranslationBlock(block);
+    expect(text.style.fontSize).toBe("16px");
+    expect(text.style.paddingTop).toBe("0px");
+  });
+
+  it("restores readable text when no candidate size fits instead of committing the failed minimum", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, {
+      id: "no-valid-size", text: "完整译文", color: "#222", fontFamily: "Arial", fontSize: 16,
+      fontWeight: 400, lineHeight: 20, left: 0, top: 0, width: 200, height: 20
+    });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    Object.defineProperties(text, {
+      clientWidth: { get: () => 200 }, clientHeight: { get: () => 20 }, scrollWidth: { get: () => 200 },
+      scrollHeight: { get: () => 64 }
+    });
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ width: 200, top: 0 } as DOMRect);
+    vi.spyOn(document, "createRange").mockReturnValue({
+      selectNodeContents: vi.fn(), getBoundingClientRect: () => new DOMRect(0, 0, 200, 64)
+    } as unknown as Range);
+    fitTranslationBlock(block);
+    expect(text.style.fontSize).toBe("16px");
+    expect(text.style.lineHeight).toBe("20px");
+    expect(text.textContent).toBe("完整译文");
+    expect(block.dataset.layoutOverflow).toBe("true");
+  });
+  it("checks actual browser overflow after estimates and shrinks without dropping text", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, {
+      id: "fallback-font", text: "Fallback fonts wrap differently from estimated text.", color: "#222",
+      fontFamily: "Arial", fontSize: 16, fontWeight: 400, lineHeight: 20,
+      left: 0, top: 0, width: 80, height: 20
+    });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    Object.defineProperties(text, {
+      clientWidth: { get: () => 80 }, clientHeight: { get: () => 20 }, scrollWidth: { get: () => 80 },
+      scrollHeight: { get: () => Number.parseFloat(text.style.fontSize) > 10 ? 40 : 20 }
+    });
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ width: 80, top: 0 } as DOMRect);
+    vi.spyOn(document, "createRange").mockReturnValue({
+      selectNodeContents: vi.fn(), getBoundingClientRect: () => ({ top: 0 })
+    } as unknown as Range);
+    fitTranslationBlock(block);
+    expect(Number.parseFloat(text.style.fontSize)).toBeLessThanOrEqual(10);
+    expect(text.scrollHeight).toBe(text.clientHeight);
+    expect(text.textContent).toBe("Fallback fonts wrap differently from estimated text.");
+  });
+
+  it("does not halve the font when a tiny reduction removes one wrapped line", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, {
+      id: "wrap-threshold", text: "边界附近的译文", color: "#222", fontFamily: "Arial", fontSize: 16,
+      fontWeight: 400, lineHeight: 20, left: 0, top: 0, width: 80, height: 20
+    });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    Object.defineProperties(text, {
+      clientWidth: { get: () => 80 }, clientHeight: { get: () => 20 }, scrollWidth: { get: () => 80 },
+      scrollHeight: { get: () => Number.parseFloat(text.style.fontSize) > 15.8 ? 40 : 20 }
+    });
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ width: 80, top: 0 } as DOMRect);
+    vi.spyOn(document, "createRange").mockReturnValue({
+      selectNodeContents: vi.fn(), getBoundingClientRect: () => ({ top: 0 })
+    } as unknown as Range);
+    fitTranslationBlock(block);
+    expect(Number.parseFloat(text.style.fontSize)).toBeGreaterThan(15.7);
+    expect(Number.parseFloat(text.style.fontSize)).toBeLessThanOrEqual(15.8);
+  });
+
+  it("adjusts font size, line spacing and inline formulas together using the PDF scale", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, {
+      id: "manual-font", text: "译文", color: "#222", fontFamily: "Arial", fontSize: 20, fontSizeStep: 2,
+      fontWeight: 400, lineHeight: 24, left: 0, top: 0, width: 300, height: 80
+    });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    const formula = document.createElement("canvas");
+    formula.className = "pdf-inline-formula";
+    formula.style.cssText = "width: 40px; height: 24px; vertical-align: -4px";
+    text.append(formula);
+    block.querySelector<HTMLButtonElement>('[aria-label="增大字号"]')!.click();
+    expect(Number.parseFloat(text.style.fontSize)).toBe(22);
+    expect(Number.parseFloat(text.style.lineHeight)).toBeCloseTo(26.4);
+    expect(Number.parseFloat(formula.style.width)).toBe(44);
+    expect(Number.parseFloat(formula.style.verticalAlign)).toBeCloseTo(-4.4);
+    block.querySelector<HTMLButtonElement>('[aria-label="减小字号"]')!.click();
+    expect(Number.parseFloat(text.style.fontSize)).toBe(20);
+    expect(Number.parseFloat(formula.style.width)).toBe(40);
+  });
+
+  it("uses spare vertical space on manual enlargement without entering the next block", () => {
+    const layer = createLayer();
+    const options = {
+      text: "译文", color: "#222", fontFamily: "Arial", fontSize: 20, fontWeight: 400, lineHeight: 24,
+      left: 0, top: 20, width: 300, height: 80
+    };
+    const block = createEditableTranslationBlock(layer, { ...options, id: "enlarge" });
+    const next = createEditableTranslationBlock(layer, { ...options, top: 110, id: "next" });
+    layer.append(block, next);
+    Object.defineProperty(block.querySelector(".translation-block-text"), "scrollHeight", { get: () => 100 });
+    block.querySelector<HTMLButtonElement>('[aria-label="增大字号"]')!.click();
+    expect(block.style.height).toBe("89px");
+    expect(next.style.top).toBe("110px");
+  });
+
   it("keeps editor scrollbars hidden until the text is focused", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/pdf/styles.css"), "utf8");
 

@@ -82,6 +82,16 @@ function normalizeProvider(
   globalChunkSize: number,
   globalConcurrency: number
 ): ProviderConfig {
+  if (provider.type === "deepseek"
+    && (provider.model === "deepseek-v4-flash" || provider.model === "deepseek-v4-flash-vision-exp")) {
+    provider = { ...provider, model: "deepseek-flash" };
+  }
+  if (provider.type === "openai-compatible") {
+    provider = {
+      ...provider,
+      ollamaCompatibility: provider.ollamaCompatibility !== false
+    };
+  }
   const legacyPerformance = provider.performanceMode === undefined;
   const performanceMode = provider.performanceMode === "custom"
     || (legacyPerformance && isLlmProvider(provider))

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WuPage Translator",
   "description": "One-click page translation with configurable HTTP and OpenAI- or Anthropic-compatible LLM providers.",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -31,7 +31,7 @@
     }
   ],
   "options_page": "options.html",
-  "permissions": ["storage", "offscreen", "contextMenus", "activeTab"],
+  "permissions": ["storage", "offscreen", "contextMenus", "activeTab", "declarativeNetRequestWithHostAccess"],
   "sandbox": { "pages": ["ocr-sandbox.html"] },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';",
