@@ -75,6 +75,37 @@ describe("viewport page translation", () => {
     return image;
   }
 
+  it("requests placeholder validation for rich text before replacing its source", async () => {
+    document.body.innerHTML = `<main><p>Read <code>theGuide()</code> carefully.</p></main>`;
+    vi.mocked(sendRuntimeRequest).mockImplementation(async (request: RuntimeRequest) => {
+      expect(request).toMatchObject({ type: "TRANSLATE_BATCH", preservePlaceholders: true });
+      return { translations: ["仔细阅读 ⟪WUPAGE0⟫。"], cached: 0 } as TranslateBatchResponse;
+    });
+    const result = await startPageTranslation({ ...settings, translationDisplayMode: "replace" });
+    expect(result.translated).toBe(1);
+    expect(document.querySelector(".wupage-translation code")?.textContent).toBe("theGuide()");
+    clearPageTranslation();
+    expect(document.querySelector("p")?.textContent).toBe("Read theGuide() carefully.");
+  });
+
+  it("does not rescan multiline post translations as source after unrelated mutations", async () => {
+    document.body.innerHTML = `<main><div data-testid="tweetText">Original post text.\n\nSecond paragraph.</div></main>`;
+    vi.mocked(sendRuntimeRequest).mockImplementation(async (request: RuntimeRequest) => {
+      if (request.type !== "TRANSLATE_BATCH") throw new Error("Unexpected request");
+      return { translations: request.texts.map(() => "第一行译文\n第二行译文"), cached: 0 } as TranslateBatchResponse;
+    });
+    await startPageTranslation(settings);
+    const outputs = [...document.querySelectorAll(".wupage-translation")];
+    const content = outputs.map((node) => node.textContent);
+    const outputNodes = outputs.map((node) => [...node.childNodes]);
+    document.querySelector("main")!.append(document.createElement("div"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(outputs.map((node) => node.textContent)).toEqual(content);
+    expect(outputs.map((node) => [...node.childNodes])).toEqual(outputNodes);
+    expect([...document.querySelectorAll(".wupage-translation")]).toEqual(outputs);
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("reuses completed translations when switching display modes without restarting requests", async () => {
     document.body.innerHTML = `<main><p>First sentence.</p><p>Second sentence.</p></main>`;
     translateNormally();

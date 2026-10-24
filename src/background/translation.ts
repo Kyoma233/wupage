@@ -1,6 +1,6 @@
 import { CACHE_PREFIX } from "../shared/defaults";
 import { sha256 } from "../shared/hash";
-import { getEffectiveProviderPerformance } from "../shared/performance";
+import { getEffectiveProviderPerformance, isLlmProvider } from "../shared/performance";
 import type {
   ExtensionSettings,
   ProviderConfig,
@@ -12,6 +12,7 @@ import type {
 import { createProvider } from "./providers";
 import { normalizeProtectedText } from "../shared/protected-text";
 import { translateProtectedText } from "./protected-translation";
+import { assertTranslationResponse, TranslationResponseError } from "./translation-response";
 
 const providerLimiters = new Map<string, ProviderLimiter>();
 const debugTasks: TranslationDebugTask[] = [];
@@ -32,7 +33,7 @@ export async function translateWithSettings(
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
   const cacheProviderId = settings.cacheEnabled
-    ? `${providerId}.${await sha256(JSON.stringify({ version: 2, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
+    ? `${providerId}.${await sha256(JSON.stringify({ version: 3, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
     : providerId;
   const cachedTranslations = new Map<number, string>();
@@ -57,9 +58,7 @@ export async function translateWithSettings(
   const runProviderTexts = (texts: string[]) =>
     runProviderTask(providerConfig, request, texts, performance, settings.concurrency, async () => {
       const result = await translateProviderTexts(providerConfig, provider, request, texts);
-      if (result.length !== texts.length || result.some((text) => typeof text !== "string" || !text.trim())) {
-        throw new Error(`${isLlmProvider(providerConfig) ? "LLM" : "Translation"} response contains missing or empty items.`);
-      }
+      assertTranslationResponse(result, texts.length);
       return result;
     });
   const translated = await runBatches(
@@ -308,7 +307,7 @@ async function translateProviderBatchWithRecovery(
   try {
     return await translate(texts);
   } catch (error) {
-    if (!isLlmProvider(providerConfig) || !isRecoverableLlmResponseError(error)) throw error;
+    if (!isLlmProvider(providerConfig) || !(error instanceof TranslationResponseError)) throw error;
     if (texts.length === 1) return translate(texts);
 
     const midpoint = Math.ceil(texts.length / 2);
@@ -318,13 +317,6 @@ async function translateProviderBatchWithRecovery(
     ]);
     return [...left, ...right];
   }
-}
-
-function isLlmProvider(providerConfig: ProviderConfig): boolean {
-  return providerConfig.type === "openai-compatible"
-    || providerConfig.type === "anthropic-compatible"
-    || providerConfig.type === "deepseek"
-    || providerConfig.type === "zhipu-glm";
 }
 
 async function translateProviderTexts(
@@ -381,11 +373,6 @@ function parseContextualTranslation(value: string, expectedLength: number): stri
   return translations.every((text) => text.trim()) ? translations : null;
 }
 
-function isRecoverableLlmResponseError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return error.message.startsWith("LLM response ");
-}
-
 async function readCachedTranslation(
   providerId: string,
   targetLang: string,
@@ -393,7 +380,7 @@ async function readCachedTranslation(
   context?: string
 ): Promise<string | undefined> {
   const key = await cacheKey(providerId, targetLang, text, context);
-  const result = await chrome.storage.local.get(key);
+  const result = await chrome.storage.local.get(key).catch(() => ({} as Record<string, unknown>));
   return typeof result[key] === "string" && result[key].trim() ? result[key] : undefined;
 }
 
@@ -405,7 +392,8 @@ async function writeCachedTranslation(
   context?: string
 ): Promise<void> {
   const key = await cacheKey(providerId, targetLang, text, context);
-  await chrome.storage.local.set({ [key]: translation });
+  // Cache quota/availability must not discard an otherwise valid translation.
+  await chrome.storage.local.set({ [key]: translation }).catch(() => undefined);
 }
 
 async function cacheKey(

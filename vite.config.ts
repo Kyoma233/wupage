@@ -7,6 +7,10 @@ export default defineConfig({
   plugins: [{
     name: "bundle-local-ocr-runtime",
     async closeBundle() {
+      // Manifest content scripts are classic scripts. Bundle them independently
+      // so shared helpers cannot introduce Rollup's module imports into content.js.
+      await bundle({ entryPoints: ["src/content/index.ts"], outfile: resolve(__dirname, "dist/content.js"),
+        bundle: true, minify: true, sourcemap: true, format: "iife", platform: "browser", target: "chrome120" });
       const output = resolve(__dirname, "dist/ocr-runtime");
       await mkdir(output, { recursive: true });
       await bundle({ entryPoints: ["src/ocr/sandbox.ts"], outfile: resolve(output, "engine.js"), bundle: true, minify: true, format: "iife", platform: "browser", target: "chrome120", external: ["fs", "path"],
@@ -26,7 +30,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         background: resolve(__dirname, "src/background/index.ts"),
-        content: resolve(__dirname, "src/content/index.ts"),
         popup: resolve(__dirname, "popup.html"),
         options: resolve(__dirname, "options.html"),
         pdf: resolve(__dirname, "pdf.html"),

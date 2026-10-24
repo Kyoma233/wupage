@@ -18,6 +18,7 @@ import type { ImageRegionResult } from "./image-regions";
 export { parseImageRegions } from "./image-regions";
 import { readPath, renderTemplate } from "./template";
 import { chatCompletionsEndpoint, usesOllamaCompatibility, withOllamaCompatibility } from "./ollama-compatibility";
+import { TranslationResponseError } from "./translation-response";
 
 const GOOGLE_WEB_REQUEST_CONCURRENCY = 4;
 const WEB_TRANSLATION_TIMEOUT_MS = 20_000;
@@ -334,7 +335,7 @@ class OpenAICompatibleProvider implements TranslatorProvider {
     }
     const payload = await readJsonResponse<OpenAIChatResponse>(response, "LLM provider");
     const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error("LLM response did not include content.");
+    if (!content) throw new TranslationResponseError("LLM response did not include content.");
 
     return parseTranslationArray(content, request.texts.length);
   }
@@ -409,7 +410,7 @@ class AnthropicCompatibleProvider implements TranslatorProvider {
       ?.filter((entry) => entry.type === "text" && typeof entry.text === "string")
       .map((entry) => entry.text)
       .join("");
-    if (!content) throw new Error("LLM response did not include content.");
+    if (!content) throw new TranslationResponseError("LLM response did not include content.");
     return parseTranslationArray(content, request.texts.length);
   }
 }
@@ -513,6 +514,7 @@ class HttpTemplateProvider implements TranslatorProvider {
 }
 
 function parseTranslationArray(content: string, expectedLength: number): string[] {
+  if (typeof content !== "string") throw new TranslationResponseError("LLM response did not include text content.");
   const trimmed = stripCodeFence(content.trim());
   if (looksLikeHtmlDocument(trimmed)) {
     throw new Error(
@@ -523,27 +525,21 @@ function parseTranslationArray(content: string, expectedLength: number): string[
   try {
     parsed = JSON.parse(trimmed) as unknown;
   } catch {
-    if (expectedLength === 1 && trimmed) return [trimmed];
-    throw new Error("LLM response was not valid JSON.");
+    // Keep plain-text single-item compatibility, but never display truncated
+    // JSON or an unfinished Markdown fence as a successful translation.
+    if (expectedLength === 1 && trimmed && !/^(?:[\[\{"]|```)/u.test(trimmed)) return [trimmed];
+    throw new TranslationResponseError("LLM response was not valid JSON.");
   }
   if ((typeof parsed === "string" && !parsed.trim())
     || (Array.isArray(parsed) && parsed.some((item) => typeof item === "string" && !item.trim()))) {
-    throw new Error("LLM response contains an empty translation.");
+    throw new TranslationResponseError("LLM response contains an empty translation.");
   }
   if (expectedLength === 1 && typeof parsed === "string") return [parsed];
-  if (
-    expectedLength === 1
-    && Array.isArray(parsed)
-    && parsed.length > 0
-    && parsed.every((item) => typeof item === "string")
-  ) {
-    return [parsed.join("\n")];
-  }
   if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
-    throw new Error("LLM response must be a JSON array of strings.");
+    throw new TranslationResponseError("LLM response must be a JSON array of strings.");
   }
   if (parsed.length !== expectedLength) {
-    throw new Error(
+    throw new TranslationResponseError(
       `LLM response count does not match source text count (expected ${expectedLength}, received ${parsed.length}).`
     );
   }

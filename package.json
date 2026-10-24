@@ -7,6 +7,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "test": "vitest run",
+    "test:page": "node scripts/test-page-translation.mjs",
     "test:pdf": "node scripts/test-pdf-corpus.mjs",
     "test:pdf-scope": "node scripts/test-pdf-scope.mjs",
     "test:github-code": "node scripts/test-github-code-comments.mjs",

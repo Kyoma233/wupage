@@ -5,6 +5,8 @@ import {
 import type { RenderVisibilitySnapshot } from "./visibility";
 import type { TranslationDisplayMode } from "../shared/types";
 import { readImageTextLayout } from "./image-text-layout";
+import { normalizeProtectedText } from "../shared/protected-text";
+import { isDivProseBlock, READABLE_ROOT_SELECTOR } from "./readable-content";
 
 export interface TextSegment {
   id: string;
@@ -57,7 +59,7 @@ interface ProtectedToken {
   marker: string;
   node: Element;
   sourceNode: Element;
-  hiddenByReplacement?: boolean;
+  sourceHidden?: { hadClassAttribute: boolean };
 }
 
 const TRANSLATION_CLASS = "wupage-translation";
@@ -98,7 +100,8 @@ const SKIP_SELECTORS = [
   "[role='navigation']",
   "[role='banner']",
   "[role='contentinfo']",
-  "[contenteditable='true']",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[hidden]",
   "[aria-hidden='true']",
   "details-menu",
   "details-dialog",
@@ -107,12 +110,9 @@ const SKIP_SELECTORS = [
   ".rustdoc-breadcrumbs",
   ".breadcrumbs",
   ".breadcrumb",
-  "[class*='breadcrumbs']",
-  "[class*='Breadcrumb']",
   "[aria-label*='breadcrumb']",
   "[aria-label*='Breadcrumb']",
   ".IssueLabel",
-  ".Label",
   ".js-issue-labels",
   ".sidebar-labels",
   ".discussion-sidebar-item",
@@ -123,9 +123,7 @@ const SKIP_SELECTORS = [
   ".gh-header-actions",
   ".tabnav",
   ".UnderlineNav",
-  ".js-repo-nav",
-  ".Counter",
-  ".State"
+  ".js-repo-nav"
 ];
 const SKIP_SELECTOR = SKIP_SELECTORS.join(",");
 const VISIBLE_ARIA_HIDDEN_SKIP_SELECTOR = SKIP_SELECTORS.filter(
@@ -200,7 +198,6 @@ const REDDIT_METADATA_SELECTOR = [
   "shreddit-comment [slot='timestamp']",
   "shreddit-post [slot='credit-bar']"
 ].join(",");
-const READABLE_ROOT_SELECTOR = "main,article,[role='main'],.markdown-body,.docblock,#main-content";
 const CODE_SELECTOR = "pre, code, .highlight, .example-wrap, .blob-code, .react-code-text";
 const CODE_COMMENT_TARGET_SELECTOR = ".react-code-text, .blob-code, pre, code, .highlight";
 
@@ -322,7 +319,7 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
     renderedById.delete(id);
     removePendingForId(id);
     for (const token of protectedTokensById.get(id) ?? []) {
-      if (token.hiddenByReplacement) token.sourceNode.classList.remove(REPLACED_SOURCE_CLASS);
+      restoreProtectedSource(token);
     }
     protectedTokensById.delete(id);
     sourceTextById.delete(id);
@@ -421,8 +418,8 @@ function collectTextSegmentsFromRoot(
   translateCodeComments: boolean
 ): TextSegment[] {
   if (resetTracking) clearNodeTracking();
-  splitXPostLineBreakTextNodes(root);
-  splitYouTubeDescriptionTextNodes(root);
+  splitAuthoredLineBreakTextNodes(root, X_POST_TEXT_SELECTOR);
+  splitAuthoredLineBreakTextNodes(root, YOUTUBE_DESCRIPTION_SELECTOR, true);
   const alreadyTracked = new Set(trackedNodes.map((tracked) => tracked.node));
   const visibility = createRenderVisibilitySnapshot();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -476,6 +473,15 @@ export function renderTranslations(
   translations: Array<{ id: string; text: string }>,
   displayMode: TranslationDisplayMode = "bilingual"
 ): void {
+  translations = translations.flatMap(({ id, text }) => {
+    if (!protectedTokensById.has(id)) return [{ id, text }];
+    const normalized = normalizeProtectedText(sourceTextById.get(id) ?? "", text);
+    if (normalized !== undefined) return [{ id, text: normalized }];
+    // Keep the original visible if an unvalidated result reaches the renderer.
+    // Formula/code identity cannot safely be reconstructed from occurrence order.
+    removePendingForId(id);
+    return [];
+  });
   const translationById = new Map(translations.map((entry) => [entry.id, entry.text]));
   for (const { id, text } of translations) {
     if (sourceTextById.has(id)) translatedTextById.set(id, text);
@@ -840,8 +846,8 @@ function replaceTrackedSource(nodes: TrackedNode[], protectedTokenId?: string): 
   if (!protectedTokenId) return;
   for (const token of protectedTokensById.get(protectedTokenId) ?? []) {
     if (token.sourceNode.classList.contains(REPLACED_SOURCE_CLASS)) continue;
+    token.sourceHidden = { hadClassAttribute: token.sourceNode.hasAttribute("class") };
     token.sourceNode.classList.add(REPLACED_SOURCE_CLASS);
-    token.hiddenByReplacement = true;
   }
 }
 
@@ -852,6 +858,15 @@ function restoreGroupedSource(group: TrackedGroup): void {
     group.block.removeAttribute("class");
   }
   group.sourceHidden = undefined;
+}
+
+function restoreProtectedSource(token: ProtectedToken): void {
+  if (!token.sourceHidden) return;
+  token.sourceNode.classList.remove(REPLACED_SOURCE_CLASS);
+  if (!token.sourceHidden.hadClassAttribute && token.sourceNode.getAttribute("class") === "") {
+    token.sourceNode.removeAttribute("class");
+  }
+  token.sourceHidden = undefined;
 }
 
 function restoreReplacedSourcesIn(root: Element): void {
@@ -871,10 +886,8 @@ function restoreReplacedSourcesIn(root: Element): void {
   }
   for (const tokens of protectedTokensById.values()) {
     for (const token of tokens) {
-      if (!token.hiddenByReplacement) continue;
       if (token.sourceNode !== root && !root.contains(token.sourceNode)) continue;
-      token.sourceNode.classList.remove(REPLACED_SOURCE_CLASS);
-      token.hiddenByReplacement = false;
+      restoreProtectedSource(token);
     }
   }
 }
@@ -1093,6 +1106,7 @@ function groupTextSegments(
   }
 
   const groupedSegments: TextSegment[] = [];
+  const trackedSourceNodes = new Set(trackedNodes.map((entry) => entry.node));
   for (const [block, groupNodes] of groups) {
     if (block.matches(YOUTUBE_DESCRIPTION_SELECTOR)) {
       for (const line of getYouTubeDescriptionLines(block, groupNodes, visibility)) {
@@ -1136,7 +1150,8 @@ function groupTextSegments(
     ) continue;
     if (!text) continue;
     const authoredLines = isAuthoredLineTextBlock(block);
-    trackedGroups.push({ id, nodes: groupNodes, block, mode: authoredLines ? "block" : getRenderMode(block), authoredLines });
+    const sourceNodes = completeGroupedSourceNodes(block, groupNodes, visibility, trackedSourceNodes);
+    trackedGroups.push({ id, nodes: sourceNodes, block, mode: authoredLines ? "block" : getRenderMode(block), authoredLines });
     if (tokens.length) protectedTokensById.set(id, tokens);
     groupedSegments.push({ id, text, element: block });
     groupNodes.forEach((tracked) => standalone.delete(tracked.id));
@@ -1148,6 +1163,32 @@ function groupTextSegments(
   ];
 }
 
+function completeGroupedSourceNodes(
+  block: Element,
+  nodes: TrackedNode[],
+  visibility: RenderVisibilitySnapshot,
+  tracked: Set<Text>
+): TrackedNode[] {
+  const complete = [...nodes];
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const parent = node.parentElement;
+    if (tracked.has(node) || !parent || findGroupingBlock(parent) !== block
+      || parent.closest("code,kbd,samp,button,input,textarea,select,option,[role='button']")
+      || shouldSkipElement(parent, true, visibility) || !visibility.isTextNodeVisuallyRendered(node)) continue;
+    // Short words, punctuation and whitespace can be in the complete paragraph
+    // even when they were unsuitable as standalone translation requests.
+    const entry: TrackedNode = {
+      id: nodes[0].id, node, mode: nodes[0].mode, sourceValue: node.data, sourceParent: parent
+    };
+    trackedNodes.push(entry);
+    tracked.add(node);
+    complete.push(entry);
+  }
+  return complete;
+}
+
 interface XPostParagraphGroup {
   nodes: TrackedNode[];
   text: string;
@@ -1157,17 +1198,18 @@ interface XPostParagraphGroup {
 // Description runs contain literal newlines, with links in separate siblings.
 // Track each authored line so providers cannot flatten the description and so
 // translations stay beside their source rather than at the end of the host.
-function splitYouTubeDescriptionTextNodes(root: Element): void {
+function splitAuthoredLineBreakTextNodes(root: Element, selector: string, skipLinks = false): void {
   const descriptions = [
-    ...(root.matches(YOUTUBE_DESCRIPTION_SELECTOR) ? [root] : []),
-    ...root.querySelectorAll(YOUTUBE_DESCRIPTION_SELECTOR)
+    ...(root.matches(selector) ? [root] : []),
+    ...root.querySelectorAll(selector)
   ];
   for (const description of descriptions) {
     const walker = document.createTreeWalker(description, NodeFilter.SHOW_TEXT);
     const nodes: Text[] = [];
     while (walker.nextNode()) nodes.push(walker.currentNode as Text);
     for (const node of nodes) {
-      if (node.parentElement?.closest(`a, .${TRANSLATION_CLASS}`)) continue;
+      if (node.parentElement?.closest(`.${TRANSLATION_CLASS}`)
+        || (skipLinks && node.parentElement?.closest("a"))) continue;
       const breaks = [...node.data.matchAll(/\r?\n+/g)];
       for (const match of breaks.reverse()) {
         const end = match.index! + match[0].length;
@@ -1236,36 +1278,6 @@ function getYouTubeDescriptionLines(
   return lines;
 }
 
-/**
- * X preserves authored newlines inside text nodes. Split only at line-break
- * runs so paragraph boundaries can be tracked without changing the post's
- * rendered text or aggregate textContent.
- */
-function splitXPostLineBreakTextNodes(root: Element): void {
-  const posts = [
-    ...(root.matches(X_POST_TEXT_SELECTOR) ? [root] : []),
-    ...root.querySelectorAll(X_POST_TEXT_SELECTOR)
-  ];
-
-  for (const post of posts) {
-    const walker = document.createTreeWalker(post, NodeFilter.SHOW_TEXT);
-    const nodes: Text[] = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-
-    for (const node of nodes) {
-      const parts = node.data.split(/(\r?\n+)/).filter((part) => part.length > 0);
-      if (parts.length < 2) continue;
-      node.data = parts[0];
-      let anchor: ChildNode = node;
-      for (const part of parts.slice(1)) {
-        const sibling = document.createTextNode(part);
-        anchor.after(sibling);
-        anchor = sibling;
-      }
-    }
-  }
-}
-
 function getXPostParagraphGroups(
   block: Element,
   groupNodes: TrackedNode[]
@@ -1273,6 +1285,9 @@ function getXPostParagraphGroups(
   const trackedByNode = new Map(groupNodes.map((tracked) => [tracked.node, tracked]));
   const walker = document.createTreeWalker(block, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
+      if ((node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement)?.closest(`.${TRANSLATION_CLASS}`)) {
+        return NodeFilter.FILTER_REJECT;
+      }
       if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
       return (node as Element).matches("br") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
     }
@@ -1332,14 +1347,6 @@ function findGroupingBlock(element: Element | null): Element | null {
   const compactControlTarget = getCompactControlTarget(element);
   if (compactControlTarget) return compactControlTarget;
 
-  // Mail bodies and other web apps commonly use divs with inline formatting
-  // instead of semantic paragraphs. Keep each such paragraph together.
-  const div = element.closest("div");
-  if (div?.closest("[role='main']")
-    && !div.querySelector("div,p,table,ul,ol,blockquote,button,input,textarea,[contenteditable]")) {
-    return div;
-  }
-
   const readableBlock = element.closest(
     `${SEMANTIC_TEXT_BLOCK_SELECTOR}, label, summary, ${X_POST_TEXT_SELECTOR}`
   );
@@ -1357,6 +1364,9 @@ function findGroupingBlock(element: Element | null): Element | null {
     if (!candidate.matches("span,em,strong,b,i,u,small,mark,code,a,ruby,rt")) break;
     candidate = candidate.parentElement;
   }
+
+  const div = element.closest("div");
+  if (div && isDivProseBlock(div)) return div;
 
   const listItem = element.closest("li");
   return listItem && !isStructuredListItem(listItem) ? listItem : null;
@@ -1466,7 +1476,8 @@ function isInlineCodeInReadableText(element: Element): boolean {
   const code = element.closest("code");
   if (!code) return false;
   if (code.closest("pre, .highlight, .example-wrap, .blob-code, .react-code-text")) return false;
-  return Boolean(code.closest("p, li, blockquote"));
+  const div = code.closest("div");
+  return Boolean(code.closest("p, li, blockquote") || (div && isDivProseBlock(div)));
 }
 
 function getReadableBlockText(
@@ -1503,6 +1514,8 @@ function getReadableBlockText(
         ".sr-only",
         "[role='button']",
         "[aria-hidden='true']",
+        "[hidden]",
+        "[contenteditable]:not([contenteditable='false'])",
         "[title*='Copy item path']",
         "[aria-label*='Copy item path']"
       ].join(",")
@@ -1512,8 +1525,8 @@ function getReadableBlockText(
   const tokens: ProtectedToken[] = [];
   protectedCandidates.forEach(({ element, sourceElement }) => {
     if (!clone.contains(element)) return;
-    if (!isProtectedInlineElement(element)) return;
     if (!sourceElement) return;
+    if (!isProtectedInlineElement(sourceElement)) return;
     const protectedElement = getProtectedRenderElement(sourceElement);
     const marker = `⟪WUPAGE${tokens.length}⟫`;
     tokens.push({
@@ -1558,7 +1571,7 @@ function renderProtectedText(container: Element, id: string, text: string): void
 
   const tokenByMarker = new Map(tokens.map((token) => [token.marker, token]));
   const pattern = new RegExp(tokens.map((token) => escapeRegExp(token.marker)).join("|"), "g");
-  const normalizedText = normalizeProtectedMarkers(text, tokens);
+  const normalizedText = text;
   let cursor = 0;
   for (const match of normalizedText.matchAll(pattern)) {
     const marker = match[0];
@@ -1571,32 +1584,10 @@ function renderProtectedText(container: Element, id: string, text: string): void
   if (cursor < normalizedText.length) container.append(document.createTextNode(normalizedText.slice(cursor)));
 }
 
-function normalizeProtectedMarkers(text: string, tokens: ProtectedToken[]): string {
-  const markerByIndex = new Map(
-    tokens.map((token) => [Number(token.marker.match(/\d+/)?.[0]), token.marker])
-  );
-  const pattern = /[⟪《〈<【\[\{«「『]\s*WUPAGE\s*(\d+)\s*[⟫》〉>】\]\}»」』]/gi;
-  const occurrences = [...text.matchAll(pattern)];
-  const indexes = occurrences.map((match) => Number(match[1]));
-  const isCompletePermutation =
-    occurrences.length === tokens.length &&
-    new Set(indexes).size === tokens.length &&
-    indexes.every((index) => markerByIndex.has(index));
-  const repairByPosition = occurrences.length === tokens.length && !isCompletePermutation;
-  let occurrenceIndex = 0;
-
-  pattern.lastIndex = 0;
-  return text.replace(pattern, (match, index: string) => {
-    if (repairByPosition) {
-      return tokens[occurrenceIndex++]?.marker ?? match;
-    }
-    return markerByIndex.get(Number(index)) ?? match;
-  });
-}
-
 function isProtectedInlineElement(element: Element): boolean {
   if (element.closest("pre, .highlight, .example-wrap, .blob-code, .react-code-text")) return false;
-  return Boolean(element.closest(`li,${SEMANTIC_TEXT_BLOCK_SELECTOR}`));
+  const div = element.closest("div");
+  return Boolean(element.closest(`li,${SEMANTIC_TEXT_BLOCK_SELECTOR}`) || (div && isDivProseBlock(div)));
 }
 
 function getProtectedRenderElement(element: Element): Element {

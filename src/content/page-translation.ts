@@ -12,6 +12,7 @@ import {
 import type { TextSegment } from "./dom";
 import { sendRuntimeRequest } from "./runtime";
 import { buildTranslationContext } from "./translation-context";
+import { getEffectiveProviderPerformance, isLlmProvider } from "../shared/performance";
 
 const VIEWPORT_MARGIN_RATIO = 0.75;
 const MIN_VIEWPORT_MARGIN = 240;
@@ -78,7 +79,7 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
   const initialPromise = new Promise<PageTranslationResult>((resolve) => {
     resolveInitial = resolve;
   });
-  const performance = getPageProviderPerformance(settings);
+  const performance = getEffectiveProviderPerformance(settings);
   const observer = new MutationObserver((mutations) => handleDynamicContent(session, mutations));
   const session: TranslationSession = {
     id: ++sessionCounter,
@@ -188,6 +189,7 @@ async function runBatch(session: TranslationSession, segments: TextSegment[]): P
     const data = await sendRuntimeRequest<TranslateBatchResponse>({
       type: "TRANSLATE_BATCH",
       texts: segments.map((segment) => segment.text),
+      preservePlaceholders: true,
       context: buildTranslationContext(segments.map((segment) => segment.element)),
       sourceLang: session.settings.sourceLang,
       targetLang: session.settings.targetLang,
@@ -384,47 +386,12 @@ function groupSegments(segments: TextSegment[], maxChars: number, maxItems: numb
 
 function getProgressiveMaxItems(settings: ExtensionSettings): number {
   const provider = settings.providers.find((entry) => entry.id === settings.activeProviderId);
-  return provider && isLlmProvider(provider.type) ? MAX_LLM_BATCH_ITEMS : Number.POSITIVE_INFINITY;
-}
-
-function isLlmProvider(type: string): boolean {
-  return type === "openai-compatible"
-    || type === "anthropic-compatible"
-    || type === "deepseek"
-    || type === "zhipu-glm";
+  return provider && isLlmProvider(provider) ? MAX_LLM_BATCH_ITEMS : Number.POSITIVE_INFINITY;
 }
 
 function getProgressiveChunkSize(settings: ExtensionSettings): number {
-  const performance = getPageProviderPerformance(settings);
+  const performance = getEffectiveProviderPerformance(settings);
   return Math.max(200, Math.min(MAX_PROGRESSIVE_CHUNK_SIZE, performance.chunkSize));
-}
-
-function getPageProviderPerformance(settings: ExtensionSettings): {
-  chunkSize: number;
-  concurrency: number;
-} {
-  // Keep this calculation local so Vite does not add a shared import to the MV3 content script.
-  const provider = settings.providers.find((entry) => entry.id === settings.activeProviderId);
-  if (provider?.performanceMode !== "custom") {
-    return { chunkSize: settings.chunkSize, concurrency: settings.concurrency };
-  }
-  return {
-    chunkSize: clampPerformanceValue(provider.chunkSize, 200, 4000, settings.chunkSize),
-    concurrency: Math.min(
-      settings.concurrency,
-      clampPerformanceValue(provider.concurrency, 1, 8, settings.concurrency)
-    )
-  };
-}
-
-function clampPerformanceValue(
-  value: number | undefined,
-  min: number,
-  max: number,
-  fallback: number
-): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 function settleInitialSegment(session: TranslationSession, id: string): void {

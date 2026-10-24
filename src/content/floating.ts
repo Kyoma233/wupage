@@ -913,6 +913,7 @@ async function translateSegments(
   return sendRuntimeRequest<TranslateBatchResponse>({
     type: "TRANSLATE_BATCH",
     texts,
+    preservePlaceholders: true,
     context,
     sourceLang: settings.sourceLang,
     targetLang: settings.targetLang,

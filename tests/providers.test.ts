@@ -305,7 +305,7 @@ describe("ZhipuGlmProvider", () => {
     })).resolves.toEqual(["你好"]);
   });
 
-  it("joins a single translation split into multiple response strings", async () => {
+  it("rejects a single translation split into multiple response strings", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -326,7 +326,7 @@ describe("ZhipuGlmProvider", () => {
       texts: ["A paragraph with two parts."],
       sourceLang: "en",
       targetLang: "zh-CN"
-    })).resolves.toEqual(["第一部分\n第二部分"]);
+    })).rejects.toThrow("response count does not match");
   });
 
   it("rejects an HTML endpoint response with a useful configuration error", async () => {

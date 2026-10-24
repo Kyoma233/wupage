@@ -12,6 +12,7 @@ import { addRuntimeMessageListener, sendRuntimeRequest } from "./runtime";
 import { clearPageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
 import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
+import { SETTINGS_KEY } from "../shared/defaults";
 
 addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
   handleMessage(request)
@@ -30,9 +31,7 @@ initFloatingBall();
 initImageTranslation();
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  // Keep the storage key local: importing shared runtime values makes Vite
-  // emit an ES-module import, which cannot run in an MV3 content script.
-  const change = changes["wupage.settings"];
+  const change = changes[SETTINGS_KEY];
   if (area !== "local" || !change) return;
   const { oldValue, newValue } = change;
   const mode = (newValue as Partial<ExtensionSettings> | undefined)?.translationDisplayMode;

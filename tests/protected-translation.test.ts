@@ -20,7 +20,7 @@ describe("protected formula token normalization", () => {
 
 const request: TranslateBatchRequest = { texts: [], targetLang: "zh-CN", preservePlaceholders: true };
 
-describe("protected PDF translation recovery", () => {
+describe("protected text translation recovery", () => {
   it("normalizes harmless typography changes without additional provider calls", async () => {
     const translate = vi.fn(async () => ["设 《 wupage 0 》 为常数。"]);
     await expect(translateProtectedText({ ...request, texts: ["Let ⟪WUPAGE0⟫ be fixed."] }, translate))
@@ -44,7 +44,7 @@ describe("protected PDF translation recovery", () => {
       seen.push(part);
       if (part.texts.some((text) => text.includes("WUPAGE"))) return ["模型持续遗漏标记"];
       expect(part.context).not.toContain("WUPAGE");
-      expect(part.context).toContain("[mathematical expression]");
+      expect(part.context).toContain("[protected content]");
       expect(part.texts).toEqual(["Let", "be fixed and", "be positive."]);
       return ["设", "为常数且", "为正数。"];
     });

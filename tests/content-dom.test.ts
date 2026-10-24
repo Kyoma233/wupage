@@ -20,6 +20,63 @@ import {
 } from "../src/content/dom";
 
 describe("content DOM translation extraction", () => {
+  it.each(["Label", "State", "Counter", "layout-with-breadcrumbs", "withBreadcrumbs"])
+    ("does not exclude ordinary prose because of a generic %s class", (className) => {
+      document.body.innerHTML = `<article class="${className}"><p>Ordinary readable article text.</p></article>`;
+      stubLayout();
+      expect(collectTextSegments().map(({ text }) => text)).toEqual(["Ordinary readable article text."]);
+    });
+
+  it("keeps semantic headings separate inside a div-based reading region", () => {
+    document.body.innerHTML = `<div role="main"><div><h2>Review <em>request</em></h2><span>Please respond tomorrow.</span></div></div>`;
+    stubLayout();
+    const segments = collectTextSegments();
+    expect(segments.map(({ text }) => text)).toEqual(["Review request", "Please respond tomorrow."]);
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: `译文：${text}` })));
+    expect(document.querySelector("h2 .wupage-translation")?.textContent).toBe("译文：Review request");
+  });
+
+  it.each(["main", "article", "div role='main'"])("groups div-based prose consistently inside %s", (rootTag) => {
+    const closingTag = rootTag.split(" ")[0];
+    document.body.innerHTML = `<${rootTag}><div>Please <strong>review</strong> the attached contract.</div></${closingTag}>`;
+    stubLayout();
+    expect(collectTextSegments().map(({ text }) => text)).toEqual(["Please review the attached contract."]);
+  });
+
+  it("protects inline code inside div-based prose", () => {
+    document.body.innerHTML = `<article><div>Call <code>fetch()</code> before continuing.</div></article>`;
+    stubLayout();
+    const [segment] = collectTextSegments();
+    expect(segment.text).toBe("Call ⟪WUPAGE0⟫ before continuing.");
+    renderTranslations([{ id: segment.id, text: "继续之前调用 ⟪WUPAGE0⟫。" }]);
+    expect(document.querySelector(".wupage-translation code")?.textContent).toBe("fetch()");
+  });
+
+  it("replaces every source fragment in a grouped paragraph, including short words and punctuation", () => {
+    document.body.innerHTML = `<main><div id="prose">Please <strong>review</strong> the attached contract.</div>
+      <p id="code">A <strong>small</strong> <code>example()</code>.</p></main>`;
+    stubLayout();
+    const original = document.querySelector("main")!.textContent;
+    const segments = collectTextSegments();
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: text.includes("WUPAGE") ? "代码 ⟪WUPAGE0⟫。" : "请审阅合同。" })), "replace");
+    expect(document.querySelector("#prose")?.textContent).toBe("请审阅合同。");
+    expect(document.querySelector("#code .wupage-translation")?.textContent).toBe("代码 example()。");
+    expect([...document.querySelector("#code")!.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent).join("")).toBe("");
+    // Protected original code remains in the DOM, hidden by its replacement class.
+    expect(document.querySelector("#code > code")?.classList.contains("wupage-replaced-source")).toBe(true);
+    clearTranslations();
+    expect(document.querySelector("main")!.textContent).toBe(original);
+  });
+
+  it.each(["", "true", "plaintext-only"])("excludes contenteditable=%s from both standalone and grouped text", (value) => {
+    document.body.innerHTML = `<main><div contenteditable="${value}">Unsent standalone draft.</div>
+      <p>Published <em>message</em>.<span contenteditable="${value}">Unsent inline draft.</span></p></main>`;
+    stubLayout();
+    const texts = collectTextSegments().map(({ text }) => text);
+    expect(texts).toEqual(["Published message."]);
+  });
+
   it("switches existing rich text, authored lines, comments and placeholders without losing originals", () => {
     document.body.innerHTML = `<main>
       <p id="prose">Read the <a href="/guide"><code>guide</code></a> today.</p>
@@ -574,7 +631,7 @@ describe("content DOM translation extraction", () => {
     expect(document.body.textContent).not.toContain("WUPAGE0");
   });
 
-  it("repairs duplicated inline-code placeholder indexes by occurrence order", () => {
+  it.each(["bilingual", "bilingual-accent", "replace"] as const)("keeps source code visible instead of guessing duplicated IDs in %s mode", (mode) => {
     document.body.innerHTML = `
       <main>
         <p id="doc">
@@ -590,18 +647,18 @@ describe("content DOM translation extraction", () => {
     expect(segments.map((segment) => segment.text)).toEqual([
       "Both ⟪WUPAGE0⟫ and ⟪WUPAGE1⟫ enable running concurrent asynchronous operations."
     ]);
+    const original = document.querySelector("#doc")!.textContent;
+    renderTranslationPlaceholders(segments);
     renderTranslations([{
       id: segments[0].id,
       text: "⟪WUPAGE0⟫ 和 ⟪WUPAGE0⟫ 都能启用并发异步操作。"
-    }]);
+    }], mode);
 
-    const restoredCode = document.querySelectorAll(".wupage-translation code");
-    expect([...restoredCode].map((node) => node.textContent)).toEqual([
-      "tokio::spawn",
-      "select!"
-    ]);
-    expect(document.querySelector(".wupage-translation")?.textContent)
-      .toBe("tokio::spawn 和 select! 都能启用并发异步操作。");
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    expect(document.querySelector("#doc")!.textContent).toBe(original);
+    setTranslationDisplayMode("replace");
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    expect(document.querySelector("#doc")!.textContent).toBe(original);
   });
 
   it("restores distinct inline-code nodes without shifting their source paths", () => {
@@ -623,6 +680,33 @@ describe("content DOM translation extraction", () => {
 
     expect([...document.querySelectorAll(".wupage-translation code")]
       .map((node) => node.textContent)).toEqual(["tokio::spawn", "select!"]);
+  });
+
+  it("preserves reordered code identities and normalizes nested token brackets", () => {
+    document.body.innerHTML = `<main><p>Compare <code>first()</code> with <code>second()</code>.</p></main>`;
+    stubLayout();
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: "{{wupage 1}} 与 《WUPAGE0》 相比。" }], "replace");
+    expect([...document.querySelectorAll(".wupage-translation code")].map((node) => node.textContent))
+      .toEqual(["second()", "first()"]);
+    expect(document.body.textContent).not.toContain("WUPAGE");
+    clearTranslations();
+    expect(document.querySelector("p")?.textContent).toBe("Compare first() with second().");
+  });
+
+  it.each([undefined, "", "syntax-symbol"])("restores the original protected node class attribute %s", (className) => {
+    document.body.innerHTML = `<main><p>Call <code>example()</code> today.</p></main>`;
+    const code = document.querySelector("code")!;
+    if (className !== undefined) code.setAttribute("class", className);
+    const original = document.querySelector("main")!.innerHTML;
+    stubLayout();
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: "今天调用 ⟪WUPAGE0⟫。" }], "replace");
+    setTranslationDisplayMode("bilingual");
+    expect(code.getAttribute("class")).toBe(className ?? null);
+    setTranslationDisplayMode("replace");
+    clearTranslations();
+    expect(document.querySelector("main")!.innerHTML).toBe(original);
   });
 
   it("groups readable headings with inline code into one segment", () => {

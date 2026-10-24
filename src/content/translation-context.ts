@@ -1,3 +1,5 @@
+import { isDivProseBlock, READABLE_ROOT_SELECTOR } from "./readable-content";
+
 const CONTEXT_BLOCK_SELECTOR = [
   "h1",
   "h2",
@@ -9,15 +11,6 @@ const CONTEXT_BLOCK_SELECTOR = [
   "caption",
   "dt",
   "dd"
-].join(",");
-const READABLE_ROOT_SELECTOR = [
-  "article",
-  "main",
-  "[role='main']",
-  ".entry-content",
-  ".post-content",
-  ".article-content",
-  ".markdown-body"
 ].join(",");
 const EXTENSION_OWNED_SELECTOR = [
   ".wupage-translation",
@@ -33,11 +26,11 @@ export function buildTranslationContext(focusElements: Element[] = []): string |
   const root = findReadableRoot(focusElements) ?? document.body;
   if (!root) return undefined;
 
-  const blocks = Array.from(root.querySelectorAll<HTMLElement>(`${CONTEXT_BLOCK_SELECTOR}, [role='main'] div`))
-    .filter((element) => !element.matches("div") || !element.querySelector("div,p,table,ul,ol,blockquote"))
-    .filter((element) => !element.closest(EXTENSION_OWNED_SELECTOR))
-    .filter((element) => !element.closest("nav,[role='navigation'],[aria-hidden='true'],[hidden],[contenteditable='true'],textarea,input"));
-  const textByBlock = new Map(blocks.map((block) => [block, readSourceText(block)]));
+  const eligible = createContextFilter();
+  const blocks = [root, ...root.querySelectorAll<HTMLElement>(`${CONTEXT_BLOCK_SELECTOR},div`)]
+    .filter((element) => element.matches(CONTEXT_BLOCK_SELECTOR) || isDivProseBlock(element))
+    .filter(eligible);
+  const textByBlock = new Map(blocks.map((block) => [block, readSourceText(block, eligible)]));
   const excerpts: string[] = [];
   const seen = new Set<string>();
   let excerptLength = 0;
@@ -86,10 +79,31 @@ function findReadableRoot(focusElements: Element[]): Element | null {
   return document.querySelector(READABLE_ROOT_SELECTOR);
 }
 
-function readSourceText(element: Element): string {
-  const clone = element.cloneNode(true) as Element;
-  clone.querySelectorAll(EXTENSION_OWNED_SELECTOR).forEach((node) => node.remove());
-  return normalizeText(clone.textContent ?? "");
+function createContextFilter(): (element: Element) => boolean {
+  const cache = new WeakMap<Element, boolean>();
+  const eligible = (element: Element): boolean => {
+    const cached = cache.get(element);
+    if (cached !== undefined) return cached;
+    const style = window.getComputedStyle(element);
+    const result = !element.matches(`${EXTENSION_OWNED_SELECTOR},nav,[role='navigation'],[aria-hidden='true'],[hidden],`
+      + "[contenteditable]:not([contenteditable='false']),textarea,input,script,style,noscript")
+      && style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse"
+      && style.contentVisibility !== "hidden" && style.opacity !== "0"
+      && (!element.parentElement || eligible(element.parentElement));
+    cache.set(element, result);
+    return result;
+  };
+  return eligible;
+}
+
+function readSourceText(element: Element, eligible: (element: Element) => boolean): string {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => node.parentElement && eligible(node.parentElement)
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+  });
+  const parts: string[] = [];
+  while (walker.nextNode()) parts.push(walker.currentNode.textContent ?? "");
+  return normalizeText(parts.join(""));
 }
 
 function normalizeText(value: string): string {
