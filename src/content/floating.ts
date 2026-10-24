@@ -15,7 +15,7 @@ import {
   renderTranslationPlaceholders,
   renderTranslations
 } from "./dom";
-import { clearPageTranslation, startPageTranslation } from "./page-translation";
+import { clearPageTranslation, getPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
 import { buildTranslationContext } from "./translation-context";
 
 const FLOATING_ID = "wupage-floating-ball";
@@ -165,7 +165,7 @@ async function translateActiveParagraph(): Promise<void> {
           id: segment.id,
           text: data.translations[index]
         })),
-        settings.translationDisplayMode
+        getPageTranslationDisplayMode(settings.translationDisplayMode)
       );
       setActiveParagraph(target);
     } catch (error) {

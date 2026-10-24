@@ -71,6 +71,22 @@
         </div>
       </section>
 
+      <section id="pdfSettings">
+        <h2>PDF 翻译</h2>
+        <div class="grid">
+          <label>翻译范围
+            <select id="pdfTranslationScope" aria-describedby="pdfTranslationScopeDescription">
+              <option value="nearby">附近页面</option>
+              <option value="unlimited">无限制（整份 PDF）</option>
+            </select>
+          </label>
+          <label id="pdfTranslationPageRadiusField">前后各翻译页数
+            <input id="pdfTranslationPageRadius" type="number" min="0" max="1000" step="1" aria-describedby="pdfTranslationScopeDescription" />
+          </label>
+        </div>
+        <p id="pdfTranslationScopeDescription" class="field-description">开始翻译后，默认处理当前页及前后各 5 页，最多 11 页。滚动后自动补译新范围，范围内完成后等待继续阅读。0 表示仅翻译当前页。</p>
+      </section>
+
       <section>
         <h2>翻译服务</h2>
         <div class="provider-field">

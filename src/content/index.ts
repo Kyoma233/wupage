@@ -9,7 +9,7 @@ import {
   setParagraphMode
 } from "./floating";
 import { addRuntimeMessageListener, sendRuntimeRequest } from "./runtime";
-import { clearPageTranslation, startPageTranslation } from "./page-translation";
+import { clearPageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
 import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
 
@@ -28,6 +28,19 @@ addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
 injectContentStyles();
 initFloatingBall();
 initImageTranslation();
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  // Keep the storage key local: importing shared runtime values makes Vite
+  // emit an ES-module import, which cannot run in an MV3 content script.
+  const change = changes["wupage.settings"];
+  if (area !== "local" || !change) return;
+  const { oldValue, newValue } = change;
+  const mode = (newValue as Partial<ExtensionSettings> | undefined)?.translationDisplayMode;
+  if ((oldValue as Partial<ExtensionSettings> | undefined)?.translationDisplayMode === mode) return;
+  if (mode === "replace" || mode === "bilingual" || mode === "bilingual-accent") {
+    setPageTranslationDisplayMode(mode);
+  }
+});
 
 async function handleMessage(request: RuntimeRequest): Promise<unknown> {
   if (request.type === "TRANSLATE_CONTEXT_IMAGE") {

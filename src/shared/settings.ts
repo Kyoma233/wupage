@@ -37,6 +37,9 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
     activeProviderId,
     chunkSize,
     concurrency,
+    pdfTranslationPageRadius: input.pdfTranslationPageRadius === null
+      ? null
+      : clampNumber(input.pdfTranslationPageRadius, 0, 1000, DEFAULT_SETTINGS.pdfTranslationPageRadius!),
     cacheEnabled:
       typeof input.cacheEnabled === "boolean"
         ? input.cacheEnabled

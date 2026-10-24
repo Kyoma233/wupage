@@ -8,6 +8,9 @@
     "dev": "vite build --watch",
     "test": "vitest run",
     "test:pdf": "node scripts/test-pdf-corpus.mjs",
+    "test:pdf-scope": "node scripts/test-pdf-scope.mjs",
+    "test:github-code": "node scripts/test-github-code-comments.mjs",
+    "test:image-resolution": "node scripts/test-image-resolution.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

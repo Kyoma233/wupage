@@ -1,5 +1,18 @@
 import type { ImageTextRegion } from "../shared/types";
 
+export function getImageRasterSize(
+  width: number, height: number, displayedWidth: number, displayedHeight: number, pixelRatio: number
+): { width: number; height: number } {
+  // SVGs with only a viewBox can report a 300px intrinsic width while being
+  // displayed much larger. Match device pixels, retaining the source aspect
+  // ratio and the existing OCR memory limits.
+  const scale = Math.min(
+    Math.max(1, displayedWidth * pixelRatio / width, displayedHeight * pixelRatio / height),
+    4096 / Math.max(width, height), Math.sqrt(16_000_000 / (width * height))
+  );
+  return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+}
+
 export function wrapImageText(context: Pick<CanvasRenderingContext2D, "measureText">, text: string, width: number): string[] {
   const lines: string[] = [];
   for (const paragraph of text.split(/\r?\n/)) {
@@ -51,7 +64,7 @@ export function renderImageTranslation(canvas: HTMLCanvasElement, source: Canvas
     context.textBaseline = "top";
     context.textAlign = region.align;
     let low = 0.5;
-    let high = Math.min(160, height / 1.15);
+    let high = height / 1.15;
     let fontSize = low;
     let lines: string[] = [];
     const availableWidth = Math.max(1, width - padding * 2);

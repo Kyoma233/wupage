@@ -56,6 +56,24 @@ describe("options provider controls", () => {
       .toBe("自动检测");
     expect(query<HTMLSelectElement>("#translationDisplayMode").selectedOptions[0]?.textContent)
       .toBe("原色对照");
+    expect(query<HTMLSelectElement>("#pdfTranslationScope").value).toBe("nearby");
+    expect(query<HTMLInputElement>("#pdfTranslationPageRadius").value).toBe("5");
+    query<HTMLInputElement>("#pdfTranslationPageRadius").value = "2";
+    click("#save");
+    await vi.waitFor(() => expect(stored.pdfTranslationPageRadius).toBe(2));
+    query<HTMLSelectElement>("#pdfTranslationScope").value = "unlimited";
+    query<HTMLSelectElement>("#pdfTranslationScope").dispatchEvent(new Event("change"));
+    expect(query<HTMLElement>("#pdfTranslationPageRadiusField").hidden).toBe(true);
+    expect(query<HTMLElement>("#pdfTranslationScopeDescription").textContent).toContain("翻译整份 PDF");
+    click("#save");
+    await vi.waitFor(() => expect(stored.pdfTranslationPageRadius).toBeNull());
+    query<HTMLSelectElement>("#pdfTranslationScope").value = "nearby";
+    query<HTMLSelectElement>("#pdfTranslationScope").dispatchEvent(new Event("change"));
+    expect(query<HTMLInputElement>("#pdfTranslationPageRadius").disabled).toBe(false);
+    expect(query<HTMLElement>("#pdfTranslationScopeDescription").textContent).toContain("滚动后自动补译");
+    query<HTMLInputElement>("#pdfTranslationPageRadius").value = "0";
+    click("#save");
+    await vi.waitFor(() => expect(stored.pdfTranslationPageRadius).toBe(0));
     query<HTMLSelectElement>("#translationDisplayMode").value = "bilingual-accent";
     query<HTMLSelectElement>("#sourceLang").value = "en";
     click("#save");

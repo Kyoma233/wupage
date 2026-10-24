@@ -70,6 +70,19 @@ export function injectContentStyles(): void {
       line-height: inherit;
     }
 
+    /* GitHub lays out code and line numbers in separate fixed-height rows.
+       Keep comment translations on the source row, including pending states,
+       so neither virtualized code nor the gutter needs to be resized. */
+    :is(.react-code-text, .blob-code) .wupage-translation[data-wupage-mode="code-comment"] {
+      display: inline;
+      margin: 0 0 0 0.75em;
+      white-space: nowrap;
+    }
+
+    :is(.react-code-text, .blob-code) .wupage-translation[data-wupage-mode="code-comment"][data-wupage-display-mode="replace"] {
+      margin: 0;
+    }
+
     .wupage-replaced-source {
       display: none !important;
     }
@@ -90,12 +103,12 @@ export function injectContentStyles(): void {
     .wupage-translation[data-wupage-container="image-text"] {
       display: block;
       margin: 0.6em 0;
-      padding: 0.8em 1em;
-      border-radius: 4px;
-      color: rgb(245, 245, 245);
-      background: rgb(23, 32, 38);
-      font-size: max(16px, 1rem);
-      line-height: 1.75;
+      padding: 0;
+      border-radius: 0;
+      color: inherit;
+      background: transparent;
+      font-size: 0.95em;
+      line-height: 1.55;
       text-align: start;
       white-space: pre-wrap;
     }
@@ -167,6 +180,10 @@ export function injectContentStyles(): void {
     .wupage-translation-pending[data-wupage-mode="block"] > span,
     .wupage-translation-pending[data-wupage-mode="code-comment"] > span {
       margin: 0.2em 0;
+    }
+
+    :is(.react-code-text, .blob-code) .wupage-translation-pending[data-wupage-mode="code-comment"] > span {
+      margin: 0;
     }
 
     @keyframes wupage-spin {

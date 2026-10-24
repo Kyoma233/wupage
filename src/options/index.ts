@@ -10,6 +10,10 @@ const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
 const chunkSize = query<HTMLInputElement>("#chunkSize");
 const concurrency = query<HTMLInputElement>("#concurrency");
+const pdfTranslationScope = query<HTMLSelectElement>("#pdfTranslationScope");
+const pdfTranslationPageRadius = query<HTMLInputElement>("#pdfTranslationPageRadius");
+const pdfTranslationPageRadiusField = query<HTMLElement>("#pdfTranslationPageRadiusField");
+const pdfTranslationScopeDescription = query<HTMLElement>("#pdfTranslationScopeDescription");
 const cacheEnabled = query<HTMLInputElement>("#cacheEnabled");
 const floatingBallEnabled = query<HTMLInputElement>("#floatingBallEnabled");
 const imageTranslationEnabled = query<HTMLInputElement>("#imageTranslationEnabled");
@@ -91,6 +95,7 @@ async function init(): Promise<void> {
   saveButton.addEventListener("click", () => void save());
   testButton.addEventListener("click", testProvider);
   restoreButton.addEventListener("click", restoreDefaults);
+  pdfTranslationScope.addEventListener("change", updatePdfTranslationScope);
 }
 
 function render(): void {
@@ -98,6 +103,9 @@ function render(): void {
   renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
   chunkSize.value = String(settings.chunkSize);
   concurrency.value = String(settings.concurrency);
+  pdfTranslationScope.value = settings.pdfTranslationPageRadius === null ? "unlimited" : "nearby";
+  pdfTranslationPageRadius.value = String(settings.pdfTranslationPageRadius ?? DEFAULT_SETTINGS.pdfTranslationPageRadius);
+  updatePdfTranslationScope();
   cacheEnabled.checked = settings.cacheEnabled;
   floatingBallEnabled.checked = settings.floatingBallEnabled;
   imageTranslationEnabled.checked = settings.imageTranslationEnabled === true;
@@ -112,6 +120,14 @@ function render(): void {
 }
 
 translationDisplayMode.addEventListener("change", updateTranslationDisplayModeDescription);
+
+function updatePdfTranslationScope(): void {
+  pdfTranslationPageRadiusField.hidden = pdfTranslationScope.value === "unlimited";
+  pdfTranslationPageRadius.disabled = pdfTranslationPageRadiusField.hidden;
+  pdfTranslationScopeDescription.textContent = pdfTranslationPageRadiusField.hidden
+    ? "翻译整份 PDF，直到全部完成。已完成的同语言、同服务译文会保留。"
+    : "开始翻译后，默认处理当前页及前后各 5 页，最多 11 页。滚动后自动补译新范围，范围内完成后等待继续阅读。0 表示仅翻译当前页。";
+}
 
 function updateTranslationDisplayModeDescription(): void {
   translationDisplayModeDescription.textContent = TRANSLATION_DISPLAY_MODES.find(
@@ -536,6 +552,8 @@ function readSettingsFromForm(): ExtensionSettings {
     activeProviderId: settings.activeProviderId,
     chunkSize: Number(chunkSize.value),
     concurrency: Number(concurrency.value),
+    pdfTranslationPageRadius: pdfTranslationScope.value === "unlimited" ? null
+      : pdfTranslationPageRadius.value === "" ? DEFAULT_SETTINGS.pdfTranslationPageRadius : Number(pdfTranslationPageRadius.value),
     cacheEnabled: cacheEnabled.checked,
     floatingBallEnabled: floatingBallEnabled.checked,
     imageTranslationEnabled: imageTranslationEnabled.checked,

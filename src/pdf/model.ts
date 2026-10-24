@@ -13,6 +13,7 @@ export interface PdfTextItemLike {
   fontAscent?: number;
   fontDescent?: number;
   preserveOriginal?: boolean;
+  tocPart?: "title" | "leader";
 }
 
 export interface PdfTextLine {
@@ -33,6 +34,7 @@ export interface PdfTextBlock {
   fontSize: number;
   preserveOriginal?: boolean;
   formulas?: PdfFormula[];
+  tocPart?: "title" | "leader";
 }
 
 interface TextLine {
@@ -44,6 +46,7 @@ interface TextLine {
   fontFamily: string;
   fontWeight: number;
   preserveOriginal?: boolean;
+  tocPart?: "title" | "leader";
 }
 
 export function normalizePdfTextItems(
@@ -74,7 +77,7 @@ export function extractTextBlocks(
   pageNumber: number,
   measure?: PdfTextMeasure
 ): PdfTextBlock[] {
-  const protectedMath = protectPdfMath(items.map(preserveRotatedText), measure);
+  const protectedMath = protectPdfMath(splitTocTextItems(items.map(preserveRotatedText), measure), measure);
   const lines = collectLines(protectedMath.items);
   return collectParagraphs(lines)
     .map((block, index) => {
@@ -93,6 +96,63 @@ export function extractTextBlocks(
         ...(formulas.some((formula) => !formula.display) ? { formulas: formulas.filter((formula) => !formula.display) } : {})
       };
     });
+}
+
+// Dot leaders are layout, not prose. Keep their original glyphs and page
+// locators, and send each title to the translator as a separate entry.
+function splitTocTextItems(items: ReadonlyArray<PdfTextItemLike>, measure?: PdfTextMeasure): PdfTextItemLike[] {
+  const output: PdfTextItemLike[] = [];
+  const locator = /^(?:\d+(?:[-–]\d+)?|[ivxlcdm]+|[A-Z][-–]\d+)$/iu;
+  for (const item of items) {
+    const leader = /(?:\.\s*){4,}|[…⋯]{2,}/u.exec(item.str);
+    if (item.preserveOriginal || !leader || (item.str.slice(leader.index + leader[0].length).trim()
+      && !locator.test(item.str.slice(leader.index + leader[0].length).trim()))) {
+      let previous: PdfTextItemLike | undefined;
+      for (let index = output.length - 1; index >= 0; index--) {
+        if (output[index].str.trim()) { previous = output[index]; break; }
+      }
+      const followsLeader = previous?.tocPart === "leader"
+        && Math.abs(Number(previous.transform[5]) - Number(item.transform[5])) < (item.height || 10) * 0.5;
+      output.push(followsLeader && locator.test(item.str.trim()) ? { ...item, preserveOriginal: true } : item);
+      continue;
+    }
+    const title = item.str.slice(0, leader.index).trimEnd();
+    if (!title) {
+      // Some PDFs emit the title and the dotted run in separate text items.
+      for (let index = output.length - 1; index >= 0; index--) {
+        const previous = output[index];
+        if (Math.abs(Number(previous.transform[5]) - Number(item.transform[5])) > (item.height || 10) * 0.5) break;
+        if (!previous.preserveOriginal) output[index] = { ...previous, tocPart: "title" };
+      }
+    }
+    const measuredWidth = (text: string): number => {
+      const metrics = measure?.(item, text);
+      return typeof metrics === "number" ? metrics : metrics?.width ?? text.length;
+    };
+    const width = item.width ?? 0;
+    const horizontalScale = Math.hypot(Number(item.transform[0]), Number(item.transform[1]))
+      / (item.height || Math.hypot(Number(item.transform[2]), Number(item.transform[3])) || 1);
+    // PDF.js may synthesize spaces between leader dots. Scaling a prefix by
+    // the measured width of that expanded string cuts into the title. Measure
+    // the title directly; anchor any trailing locator to the item's right edge.
+    const advance = (text: string): number => measure
+      ? measuredWidth(text) * horizontalScale
+      : width * text.length / Math.max(1, item.str.length);
+    const leaderEnd = leader.index + leader[0].length;
+    const titleRight = Math.min(width, advance(item.str.slice(0, leader.index)));
+    const leaderRight = Math.max(titleRight, width - advance(item.str.slice(leaderEnd)));
+    const slice = (start: number, end: number, left: number, right: number): PdfTextItemLike => {
+      const transform = Array.from(item.transform);
+      transform[4] += left;
+      return { ...item, str: item.str.slice(start, end), transform, width: right - left, hasEOL: end === item.str.length && item.hasEOL };
+    };
+    if (title) output.push({ ...slice(0, title.length, 0, titleRight), tocPart: "title" });
+    output.push({ ...slice(title.length, leaderEnd, titleRight, leaderRight), tocPart: "leader", preserveOriginal: true });
+    if (leaderEnd < item.str.length) {
+      output.push({ ...slice(leaderEnd, item.str.length, leaderRight, width), preserveOriginal: true });
+    }
+  }
+  return output;
 }
 
 // Reflowing an angled chart label as horizontal text damages the figure. Keep
@@ -147,6 +207,7 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
       : false;
     const movedToAnotherLine = current
       ? current.preserveOriginal || item.preserveOriginal
+        || current.tocPart !== item.tocPart
         || Math.abs(current.y - y) > Math.max(2.5, Math.min(current.height, height) * 0.55)
         || x + (/^⟪WUPAGE\d+⟫$/u.test(text) ? Math.max(2, height * 0.5) : 2) < previousX
         || previousEndedLine
@@ -162,7 +223,8 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
         height,
         fontFamily: item.fontFamily || "Arial, sans-serif",
         fontWeight: item.fontWeight ?? 400,
-        ...(item.preserveOriginal ? { preserveOriginal: true } : {})
+        ...(item.preserveOriginal ? { preserveOriginal: true } : {}),
+        ...(item.tocPart ? { tocPart: item.tocPart } : {})
       };
       lines.push(current);
     } else {
@@ -212,7 +274,8 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
       fontFamily: current[0].fontFamily,
       fontWeight: Math.max(...current.map((line) => line.fontWeight)),
       fontSize: Math.max(...current.map((line) => line.height)),
-      ...(current.some((line) => line.preserveOriginal) ? { preserveOriginal: true } : {})
+      ...(current.some((line) => line.preserveOriginal) ? { preserveOriginal: true } : {}),
+      ...(current[0].tocPart ? { tocPart: current[0].tocPart } : {})
     });
     current = [];
   };
@@ -227,7 +290,7 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
 }
 
 function canJoinParagraph(previous: TextLine, next: TextLine): boolean {
-  if (previous.preserveOriginal || next.preserveOriginal) return false;
+  if (previous.preserveOriginal || next.preserveOriginal || previous.tocPart || next.tocPart) return false;
   const verticalGap = Math.abs(previous.y - next.y);
   const averageHeight = (previous.height + next.height) / 2;
   const sameColumn = Math.abs(previous.x - next.x) <= Math.max(18, averageHeight * 1.7);

@@ -13,7 +13,8 @@ import {
   hasTranslationsIn,
   invalidateStaleSegments,
   renderTranslationPlaceholders,
-  renderTranslations
+  renderTranslations,
+  setTranslationDisplayMode
 } from "../src/content/dom";
 
 const paragraphs = [
@@ -110,6 +111,29 @@ describe("long-form image text translation", () => {
     expect(document.querySelector(".wupage-translation")).toBeNull();
     expect(hasPageTranslations()).toBe(false);
   });
+
+  it.each(["rgb(0, 0, 0)", "rgb(240, 240, 240)"])(
+    "uses the document's text color for image descriptions on a %s text page",
+    (color) => {
+      vi.mocked(window.getComputedStyle).mockReturnValue({
+        display: "block", visibility: "visible", opacity: "1", color,
+        backgroundColor: color === "rgb(0, 0, 0)" ? "rgb(255, 255, 255)" : "rgb(23, 32, 38)"
+      } as CSSStyleDeclaration);
+      document.body.innerHTML = '<p><img src="trpl04-06.svg"></p>';
+      const image = document.querySelector("img")!;
+      image.alt = "Three tables: the table for s contains only a pointer to the table for s1. The table for s1 contains the stack data for s1 and points to the string data on the heap.";
+      const [segment] = collectTextSegments();
+      renderTranslations([{ id: segment.id, text: "三张表及它们之间的指针关系。" }]);
+      const output = image.nextElementSibling as HTMLElement;
+      expect(output.style.color).toBe(color);
+      expect(output.textContent).toBe("三张表及它们之间的指针关系。");
+      setTranslationDisplayMode("bilingual-accent");
+      expect((image.nextElementSibling as HTMLElement).style.color).not.toBe(color);
+      setTranslationDisplayMode("replace");
+      expect((image.nextElementSibling as HTMLElement).style.color).toBe(color);
+      expect(image.classList.contains("wupage-replaced-source")).toBe(false);
+    }
+  );
 
   it("leaves no output when the translation matches the source", () => {
     mountPicture();
@@ -225,6 +249,28 @@ describe("long-form image text translation", () => {
     expect(invalidateStaleSegments()).toContain(segment.id);
     expect(image.classList.contains("wupage-replaced-source")).toBe(false);
     expect(collectAdditionalTextSegments(document.body)).toHaveLength(1);
+  });
+
+  it("reuses translated image paragraphs while switching between replacement and bilingual display", () => {
+    vi.spyOn(imageTextLayout, "readImageTextLayout").mockReturnValue({
+      width: 600, height: 240, foreground: "rgb(240, 240, 240)", fontRatio: 0.04,
+      slices: [{ top: 0, bottom: 80 }, { top: 80, bottom: 240 }]
+    });
+    const image = mountPicture();
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: translation }]);
+    for (const mode of ["replace", "bilingual-accent", "bilingual"] as const) {
+      setTranslationDisplayMode(mode);
+      const output = image.closest("picture")!.nextElementSibling as HTMLElement;
+      expect(output.dataset.wupageDisplayMode).toBe(mode);
+      expect(document.querySelectorAll(".wupage-translation")).toHaveLength(1);
+      expect(output.querySelectorAll(".wupage-image-text-original")).toHaveLength(mode === "replace" ? 0 : 2);
+      expect([...output.querySelectorAll(".wupage-image-text-result")].map((node) => node.textContent))
+        .toEqual(translation.split("\n\n"));
+      expect(invalidateStaleSegments()).toEqual([]);
+    }
+    clearTranslations();
+    expect(image.classList.contains("wupage-replaced-source")).toBe(false);
   });
 
   it("keeps the whole translation if the provider drops paragraph boundaries", () => {

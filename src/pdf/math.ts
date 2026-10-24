@@ -191,6 +191,7 @@ function itemSize(item: PdfTextItemLike): number {
 }
 
 function splitProseBoundary(item: PdfTextItemLike, measure?: PdfTextMeasure): PdfTextItemLike[] {
+  if (item.tocPart) return [item];
   if (!isProse(item.str) || isMathFontItem(item)) return [item];
   const words = [...item.str.matchAll(/\p{L}+/gu)].filter((match) => isProse(match[0]));
   const first = words[0].index!;

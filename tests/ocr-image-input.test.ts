@@ -46,12 +46,17 @@ describe("OCR alpha preprocessing", () => {
     expect(bitmap.close).not.toHaveBeenCalled();
   });
 
-  it("returns the original bitmap when a recognition copy is unnecessary", () => {
-    const context = { drawImage: vi.fn(), getImageData: () => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) }) };
+  it("copies opaque images too, so the OCR backend cannot close the postprocessing source", () => {
+    const context = { drawImage: vi.fn(), fillRect: vi.fn(), getImageData: () => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) }) };
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as unknown as CanvasRenderingContext2D);
-    const bitmap = { width: 4096, height: 2048 } as ImageBitmap;
+    const bitmap = { width: 4096, height: 2048, close: vi.fn() } as unknown as ImageBitmap;
 
-    expect(prepareOcrInput(bitmap)).toBe(bitmap);
-    expect(getContext).toHaveBeenCalledTimes(1);
+    const input = prepareOcrInput(bitmap);
+    expect(input).toBeInstanceOf(HTMLCanvasElement);
+    expect([input.width, input.height]).toEqual([4096, 2048]);
+    expect(getContext).toHaveBeenCalledTimes(2);
+    expect(context.fillRect).not.toHaveBeenCalled();
+    expect(context.drawImage).toHaveBeenLastCalledWith(bitmap, 0, 0);
+    expect(bitmap.close).not.toHaveBeenCalled();
   });
 });

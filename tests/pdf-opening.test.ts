@@ -53,6 +53,7 @@ describe("PDF source opening", () => {
   });
 
   afterEach(() => {
+    window.dispatchEvent(new Event("pagehide"));
     document.querySelectorAll<HTMLElement>("[data-timer]").forEach((element) => {
       window.clearTimeout(Number(element.dataset.timer));
     });
@@ -95,9 +96,153 @@ describe("PDF source opening", () => {
     button.click();
     expect(button.disabled).toBe(true);
     button.click();
-    expect(sendMessage.mock.calls.filter(([request]) => request.type === "SAVE_SETTINGS")).toHaveLength(1);
+    await vi.waitFor(() => expect(sendMessage.mock.calls.filter(([request]) => request.type === "SAVE_SETTINGS")).toHaveLength(1));
     finishSave({ ok: true });
     await vi.waitFor(() => expect(translated()).toBe(true));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+  });
+
+  it("starts at the reading position, debounces scrolling, and replaces waiting pages while requests are in flight", async () => {
+    let readingPage = 10;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const page = Number(this.closest<HTMLElement>("article[data-page]")?.dataset.page);
+      const top = page ? (page - readingPage) * 1000 : 0;
+      return { top, bottom: page ? top + 980 : 75, left: 0, right: 600, width: 600, height: page ? 980 : 75, x: 0, y: top, toJSON() {} };
+    });
+    const documentProxy = await getDocument.getMockImplementation()!().promise;
+    const sample = await documentProxy.getPage(1);
+    getDocument.mockReturnValue({ promise: Promise.resolve({
+      numPages: 40,
+      getPage: async (number: number) => ({ ...sample, getTextContent: async () => ({
+        items: [{ str: `Page ${number} contents.`, transform: [1, 0, 0, 12, 10, 100], width: 180, fontName: "font" }],
+        styles: { font: { fontFamily: "Arial" } }
+      }) })
+    }), destroy: vi.fn() });
+    const gates: Array<(response: RuntimeResponse) => void> = [];
+    const original = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation((request: RuntimeRequest) => request.type === "TRANSLATE_BATCH" && gates.length < 2
+      ? new Promise<RuntimeResponse>((resolve) => gates.push(resolve)) : original(request));
+    const requests = () => sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")
+      .map(([request]) => request.texts[0]);
+    await launch(fileUrl);
+    await vi.waitFor(() => expect(requests()).toEqual(["Page 10 contents.", "Page 9 contents."]));
+    readingPage = 20;
+    window.dispatchEvent(new Event("scroll"));
+    readingPage = 30;
+    window.dispatchEvent(new Event("scroll"));
+    gates[0]({ ok: true, data: { translations: ["译文"], cached: 0 } });
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(requests()).toHaveLength(2); // No intermediate range or old queued page is dispatched.
+    await vi.waitFor(() => expect(requests()[2]).toBe("Page 30 contents."));
+    gates[1]({ ok: true, data: { translations: ["译文"], cached: 0 } });
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#translateDocument")!.disabled).toBe(false));
+    expect(requests().slice(2).sort()).toEqual(Array.from({ length: 11 }, (_, index) => `Page ${index + 25} contents.`).sort());
+    expect(new Set(requests()).size).toBe(13);
+    expect(document.querySelector('article[data-page="8"] .translation-canvas-shell')?.classList.contains("is-loading")).toBe(false);
+  });
+
+  it("automatically follows the nearby range after activation, reuses overlap, and reads updated settings without reopening", async () => {
+    let readingPage = 15;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const page = Number(this.closest<HTMLElement>("article[data-page]")?.dataset.page);
+      const top = page ? (page - readingPage) * 1000 : 0;
+      return { top, bottom: page ? top + 980 : 75, left: 0, right: 600, width: 600, height: page ? 980 : 75, x: 0, y: top, toJSON() {} };
+    });
+    const documentProxy = await getDocument.getMockImplementation()!().promise;
+    const sample = await documentProxy.getPage(1);
+    getDocument.mockReturnValue({ promise: Promise.resolve({
+      numPages: 30,
+      getPage: async (number: number) => ({ ...sample, getTextContent: async () => ({
+        items: [{ str: `Page ${number} contents.`, transform: [1, 0, 0, 12, 10, 100], width: 180, fontName: "font" }],
+        styles: { font: { fontFamily: "Arial" } }
+      }) })
+    }), destroy: vi.fn() });
+    const stored = { ...structuredClone(DEFAULT_SETTINGS), cacheEnabled: false };
+    const original = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation((request: RuntimeRequest) => {
+      if (request.type === "GET_SETTINGS") return Promise.resolve({ ok: true, data: structuredClone(stored) });
+      return original(request);
+    });
+    const requests = () => sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")
+      .map(([request]) => Number(/Page (\d+)/u.exec(request.texts[0])![1]));
+    await launch(fileUrl, false);
+    const button = document.querySelector<HTMLButtonElement>("#translateDocument")!;
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    expect(button.textContent).toContain("翻译附近页面");
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(requests()).toHaveLength(0); // Scrolling alone cannot start paid translation before activation.
+    const run = async () => {
+      button.click();
+      await vi.waitFor(() => expect(button.disabled).toBe(false));
+    };
+    await run();
+    expect(requests()[0]).toBe(15);
+    expect([...requests()].sort((a, b) => a - b)).toEqual(Array.from({ length: 11 }, (_, index) => index + 10));
+    expect(document.querySelector('article[data-page="9"] .translation-canvas-shell')?.classList.contains("is-pending")).toBe(true);
+    expect(document.querySelector("#statusToast")?.textContent).toContain("滚动后自动补译");
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(requests()).toHaveLength(11);
+    await run();
+    expect(requests()).toHaveLength(11); // No duplicate requests, even with the service cache disabled.
+    readingPage = 20;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(requests()).toHaveLength(16));
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    expect(new Set(requests()).size).toBe(16); // Overlapping windows reuse their translations.
+    stored.pdfTranslationPageRadius = 0;
+    readingPage = 28;
+    await run();
+    expect(requests()).toHaveLength(17);
+    expect(requests().at(-1)).toBe(28);
+    readingPage = 30;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(requests()).toHaveLength(18));
+    expect(requests().at(-1)).toBe(30);
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    stored.pdfTranslationPageRadius = null;
+    await run();
+    expect(button.textContent).toContain("翻译全文");
+    expect(new Set(requests()).size).toBe(30);
+    expect(requests()).toHaveLength(30);
+    const language = document.querySelector<HTMLSelectElement>("#targetLang")!;
+    language.value = "ja";
+    stored.pdfTranslationPageRadius = 0;
+    readingPage = 28;
+    await run();
+    expect(requests()).toHaveLength(31); // A changed target language needs a new translation.
+  });
+
+  it("does not automatically retry failures on scroll, and allows an explicit retry", async () => {
+    const original = sendMessage.getMockImplementation()!;
+    let failed = true;
+    sendMessage.mockImplementation((request: RuntimeRequest) => request.type === "TRANSLATE_BATCH" && failed
+      ? Promise.resolve({ ok: false, error: "Service unavailable" }) : original(request));
+    await launch(fileUrl);
+    const button = document.querySelector<HTMLButtonElement>("#translateDocument")!;
+    await vi.waitFor(() => expect(document.querySelector("#statusToast")?.textContent).toContain("1 页失败"));
+    for (let index = 0; index < 3; index++) window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+    failed = false;
+    button.click();
+    await vi.waitFor(() => expect(document.querySelector("#statusToast")?.textContent).toContain("1 段译文"));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(2);
+  });
+
+  it("resets automatic translation when a different document is opened", async () => {
+    await launch(fileUrl);
+    await vi.waitFor(() => expect(translated()).toBe(true));
+    const button = document.querySelector<HTMLButtonElement>("#translateDocument")!;
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    window.dispatchEvent(new Event("scroll")); // Also cancel the old document's scheduled callback.
+    const form = document.querySelector<HTMLFormElement>("#urlForm")!;
+    document.querySelector<HTMLInputElement>("#pdfUrl")!.value = "https://example.com/second.pdf";
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.querySelector("#documentName")?.textContent).toBe("second.pdf"));
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
     expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
   });
 

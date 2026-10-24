@@ -130,6 +130,7 @@ try {
     provider.apiKey = "local-corpus-test";
     settings.activeProviderId = provider.id;
     settings.cacheEnabled = cacheEnabled;
+    settings.pdfTranslationPageRadius = null; // This corpus test deliberately translates every page.
     await chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings });
   }, { url: `http://127.0.0.1:${server.address().port}/v1`, cacheEnabled: repeat > 0 });
   await setup.close();
@@ -199,6 +200,11 @@ try {
       assert.equal(calls, before, `${entry.id}: cached translation called the service again`);
       const [translated, cached] = await completed.jsonValue();
       assert.equal(cached, translated, `${entry.id}: repeat did not hit every cached paragraph`);
+      if (attempt > 0 || !args.includes("--auto-open")) {
+        assert.equal(Number(translated), 0, `${entry.id}: same-document repeat should reuse completed translations`);
+      } else {
+        assert(Number(translated) > 0, `${entry.id}: reloaded document did not read cached translations`);
+      }
       await checkPreview(`cache repeat ${attempt + 1}`);
       await page.waitForTimeout(600);
       await checkPreview(`cache repeat ${attempt + 1} settled`);

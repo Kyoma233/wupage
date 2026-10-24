@@ -1,4 +1,4 @@
-import type { ExtensionSettings, RuntimeRequest, TranslateBatchResponse } from "../shared/types";
+import type { ExtensionSettings, RuntimeRequest, TranslateBatchResponse, TranslationDisplayMode } from "../shared/types";
 import {
   clearTranslationPlaceholders,
   clearTranslations,
@@ -6,7 +6,8 @@ import {
   collectTextSegments,
   invalidateStaleSegments,
   renderTranslationPlaceholders,
-  renderTranslations
+  renderTranslations,
+  setTranslationDisplayMode
 } from "./dom";
 import type { TextSegment } from "./dom";
 import { sendRuntimeRequest } from "./runtime";
@@ -66,9 +67,11 @@ export interface PageTranslationResult {
 let sessionCounter = 0;
 let activeSession: TranslationSession | null = null;
 let viewportTimer: number | undefined;
+let currentDisplayMode: TranslationDisplayMode | undefined;
 
 export function startPageTranslation(settings: ExtensionSettings): Promise<PageTranslationResult> {
   clearPageTranslation();
+  currentDisplayMode = settings.translationDisplayMode;
   const segments = collectTextSegments(settings.translateCodeComments);
 
   let resolveInitial!: (result: PageTranslationResult) => void;
@@ -115,6 +118,18 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
 export function clearPageTranslation(): void {
   cancelActiveSession();
   clearTranslations();
+}
+
+export function getPageTranslationDisplayMode(fallback: TranslationDisplayMode): TranslationDisplayMode {
+  return currentDisplayMode ?? fallback;
+}
+
+export function setPageTranslationDisplayMode(mode: TranslationDisplayMode): void {
+  currentDisplayMode = mode;
+  const session = activeSession;
+  if (session) session.settings = { ...session.settings, translationDisplayMode: mode };
+  preserveViewportPosition(() => setTranslationDisplayMode(mode),
+    session ? [...session.entries.values()].map((entry) => entry.segment) : []);
 }
 
 function scheduleNearbySegments(session: TranslationSession, initial = false): void {

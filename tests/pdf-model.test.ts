@@ -98,6 +98,38 @@ describe("PDF text extraction", () => {
     expect(block.lines).toHaveLength(2);
   });
 
+  it("translates dotted contents entries separately and preserves leaders and page numbers", () => {
+    const blocks = extractTextBlocks([
+      { str: "Colophon . . . . . . . . ", transform: [8, 0, 0, 8, 115, 701], width: 160 },
+      { str: "1", transform: [8, 0, 0, 8, 280, 701], width: 5, hasEOL: true },
+      { str: "1. Introduction. . . . . . . . 13", transform: [8, 0, 0, 8, 115, 689], width: 170, hasEOL: true },
+      { str: "1.1. The Chip .... 14", transform: [8, 0, 0, 8, 127, 677], width: 158, hasEOL: true }
+    ], 4, (_item, text) => text.length * 4);
+    const titles = blocks.filter((block) => block.translatable);
+    expect(titles.map((block) => block.text)).toEqual(["Colophon", "1. Introduction", "1.1. The Chip"]);
+    expect(titles.every((block) => block.lines.length === 1 && block.tocPart === "title")).toBe(true);
+    expect(titles.map((block) => block.lines[0].x)).toEqual([115, 115, 127]);
+    expect(blocks.filter((block) => block.tocPart === "leader")).toHaveLength(3);
+    expect(blocks.filter((block) => ["1", "13", "14"].includes(block.text))
+      .every((block) => block.preserveOriginal && !block.translatable)).toBe(true);
+    // Synthesized spaces in the full item must not shrink the title's crop.
+    expect(titles[0].lines[0].width).toBe(36);
+  });
+
+  it("recognizes fragmented contents titles and Roman page locators without changing prose ellipses", () => {
+    const blocks = extractTextBlocks([
+      { str: "Legal", transform: [8, 0, 0, 8, 20, 100], width: 20 },
+      { str: "notice", transform: [8, 0, 0, 8, 42, 100], width: 24 },
+      { str: "........", transform: [8, 0, 0, 8, 70, 100], width: 120 },
+      { str: "iv", transform: [8, 0, 0, 8, 200, 100], width: 6, hasEOL: true },
+      { str: "Wait .... then continue.", transform: [8, 0, 0, 8, 20, 70], width: 100 },
+      { str: "1.1. Why RP2040? .... 9", transform: [8, 0, 0, 8, 20, 40], width: 180 }
+    ], 1);
+    expect(blocks.filter((block) => block.translatable).map((block) => block.text))
+      .toEqual(["Legal notice", "Wait .... then continue.", "1.1. Why RP2040?"]);
+    expect(blocks.find((block) => block.text === "iv")).toMatchObject({ preserveOriginal: true, translatable: false });
+  });
+
   it("splits table cells separated by a large horizontal gap", () => {
     const blocks = extractTextBlocks([
       { str: "General", transform: [1, 0, 0, 12, 64.9, 688.9], width: 42.9 },

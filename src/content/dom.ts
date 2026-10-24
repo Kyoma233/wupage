@@ -211,6 +211,7 @@ let trackedImageTexts: TrackedImageText[] = [];
 let protectedTokensById = new Map<string, ProtectedToken[]>();
 let sourceTextById = new Map<string, string>();
 const renderedById = new Map<string, Element>();
+const translatedTextById = new Map<string, string>();
 let targetIdCounter = 0;
 let segmentIdCounter = 0;
 
@@ -256,6 +257,7 @@ export function collectParagraphTextSegments(
   trackedImageTexts = trackedImageTexts.filter((tracked) =>
     tracked.image !== element && !element.contains(tracked.image)
   );
+  pruneTranslationResults();
   return collectTextSegmentsFromRoot(element, false, translateCodeComments);
 }
 
@@ -324,6 +326,7 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
     }
     protectedTokensById.delete(id);
     sourceTextById.delete(id);
+    translatedTextById.delete(id);
   }
   trackedNodes = trackedNodes.filter((node) => !stale.has(node.id));
   trackedGroups = trackedGroups.filter((group) => !stale.has(group.id));
@@ -384,6 +387,7 @@ export function clearTranslationsIn(element: Element): void {
   trackedImageTexts = trackedImageTexts.filter((tracked) =>
     tracked.image !== element && !element.contains(tracked.image)
   );
+  pruneTranslationResults();
 }
 
 export function hasTranslationsIn(element: Element): boolean {
@@ -473,6 +477,9 @@ export function renderTranslations(
   displayMode: TranslationDisplayMode = "bilingual"
 ): void {
   const translationById = new Map(translations.map((entry) => [entry.id, entry.text]));
+  for (const { id, text } of translations) {
+    if (sourceTextById.has(id)) translatedTextById.set(id, text);
+  }
 
   for (const group of trackedGroups) {
     const translation = translationById.get(group.id);
@@ -551,16 +558,27 @@ export function renderTranslations(
     element.dataset.wupageDisplayMode = displayMode;
     element.setAttribute("lang", "translated");
     if (displayMode !== "replace") element.setAttribute("aria-hidden", "true");
-    if (displayMode === "bilingual-accent") {
-      element.style.color = mapTranslationTextColor("rgb(245, 245, 245)", "rgb(23, 32, 38)")
-        ?? "rgb(245, 245, 245)";
-    }
+    applyTranslationTextColor(element, tracked.image.parentElement ?? tracked.image, displayMode);
     if (!renderInterleavedImageText(tracked, element, translation, displayMode)) {
       element.textContent = translation;
     }
     insertImageTextTranslation(tracked, element);
     renderedById.set(tracked.id, element);
   }
+}
+
+// Reuse the raw results, including protected markers and image paragraphs.
+// Restoring source nodes first makes replacement mode reversible and lets the
+// new display inherit the source's color rather than the previous accent.
+export function setTranslationDisplayMode(displayMode: TranslationDisplayMode): void {
+  invalidateStaleSegments();
+  for (const [id, output] of renderedById) {
+    if (!translatedTextById.has(id)) continue;
+    output.remove();
+    renderedById.delete(id);
+  }
+  restoreReplacedSourcesIn(document.documentElement);
+  renderTranslations([...translatedTextById].map(([id, text]) => ({ id, text })), displayMode);
 }
 
 export function renderTargetTranslation(
@@ -661,6 +679,14 @@ function clearNodeTracking(): void {
   protectedTokensById = new Map();
   sourceTextById = new Map();
   renderedById.clear();
+  translatedTextById.clear();
+}
+
+function pruneTranslationResults(): void {
+  const ids = new Set([...trackedNodes, ...trackedGroups, ...trackedAttributes, ...trackedImageTexts].map((entry) => entry.id));
+  for (const id of translatedTextById.keys()) {
+    if (!ids.has(id)) translatedTextById.delete(id);
+  }
 }
 
 function collectImageTextSegments(

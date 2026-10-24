@@ -38,6 +38,30 @@ afterEach(() => {
 });
 
 describe("image translation controls", () => {
+  it("draws small-intrinsic SVGs at screen resolution and redraws on enlargement without retranslating", async () => {
+    const image = document.createElement("img"); image.src = "https://example.com/diagram.svg";
+    Object.defineProperties(image, { complete: { value: true }, naturalWidth: { value: 300 }, naturalHeight: { value: 130 } });
+    document.body.replaceChildren(image);
+    vi.spyOn(window, "devicePixelRatio", "get").mockReturnValue(2);
+    let width = 900;
+    vi.spyOn(image, "getBoundingClientRect").mockImplementation(() => ({
+      top: 20, left: 20, right: 20 + width, bottom: 20 + width * 130 / 300, width, height: width * 130 / 300
+    } as DOMRect));
+    setImageTranslationEnabled(true); button().click();
+    await vi.waitFor(() => expect(shadow().querySelector("canvas")).not.toBeNull());
+    const canvas = shadow().querySelector("canvas")!;
+    expect([canvas.width, canvas.height]).toEqual([1800, 780]);
+    expect(sendRuntimeRequest).toHaveBeenCalledWith(expect.objectContaining({ type: "TRANSLATE_IMAGE", width: 1800, height: 780 }));
+    expect(context.drawImage).toHaveBeenLastCalledWith(image, 0, 0, 1800, 780);
+    width = 1200;
+    window.dispatchEvent(new Event("resize"));
+    await vi.waitFor(() => expect(canvas.width).toBe(2400));
+    expect(canvas.height).toBe(1040);
+    expect(context.drawImage).toHaveBeenLastCalledWith(image, 0, 0, 2400, 1040);
+    button().click(); button().click();
+    expect(vi.mocked(sendRuntimeRequest).mock.calls.filter(([request]) => request.type === "TRANSLATE_IMAGE")).toHaveLength(1);
+  });
+
   it("shows the actual reason when recognized text produces no translated regions", async () => {
     vi.mocked(sendRuntimeRequest).mockResolvedValue({ regions: [], targetLang: "zh-CN", cached: false,
       warning: "已识别 3 处文字，翻译服务返回的译文与原文相同。" });

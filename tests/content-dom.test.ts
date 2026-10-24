@@ -15,10 +15,62 @@ import {
   renderTargetPlaceholder,
   renderTargetTranslation,
   renderTranslationPlaceholders,
-  renderTranslations
+  renderTranslations,
+  setTranslationDisplayMode
 } from "../src/content/dom";
 
 describe("content DOM translation extraction", () => {
+  it("switches existing rich text, authored lines, comments and placeholders without losing originals", () => {
+    document.body.innerHTML = `<main>
+      <p id="prose">Read the <a href="/guide"><code>guide</code></a> today.</p>
+      <div><span id="authored">First authored sentence.<br>Second authored sentence.<br></span></div>
+      <div class="react-code-text"><span class="pl-c">// Explain the next line</span></div>
+      <input placeholder="Search this site">
+    </main>`;
+    stubLayout("rgb(34, 34, 34)");
+    const original = document.body.textContent;
+    const code = document.querySelector("code")!;
+    const protectedSource = code.closest("a")!;
+    const authored = document.querySelector("#authored")!;
+    const breaks = [...authored.querySelectorAll("br")];
+    const segments = collectTextSegments();
+    expect(segments).toHaveLength(4);
+    renderTranslations(segments.map((segment) => ({ id: segment.id, text: segment.text.includes("WUPAGE")
+      ? "今天阅读 ⟪WUPAGE0⟫。" : "保留的译文" })));
+    for (const mode of ["replace", "bilingual-accent", "bilingual", "replace", "bilingual"] as const) {
+      setTranslationDisplayMode(mode);
+      const outputs = [...document.querySelectorAll<HTMLElement>(".wupage-translation")];
+      expect(outputs).toHaveLength(3);
+      expect(outputs.every((output) => output.dataset.wupageDisplayMode === mode)).toBe(true);
+      expect(outputs.every((output) => output.hasAttribute("aria-hidden") === (mode !== "replace"))).toBe(true);
+      expect(protectedSource.classList.contains("wupage-replaced-source")).toBe(mode === "replace");
+      expect(authored.classList.contains("wupage-replaced-source")).toBe(mode === "replace");
+      expect([...authored.querySelectorAll("br")]).toEqual(breaks);
+      expect(document.querySelector(".wupage-translation code")?.textContent).toBe("guide");
+      expect(document.querySelector("input")?.placeholder).toBe("保留的译文");
+      expect(document.querySelector(".pl-c .wupage-translation")?.textContent).toBe("// 保留的译文");
+      expect(invalidateStaleSegments()).toEqual([]);
+      if (mode === "bilingual") expect(outputs[0].style.color).toBe("rgb(34, 34, 34)");
+    }
+    clearTranslations();
+    expect(document.body.textContent).toBe(original);
+    expect(code.isConnected).toBe(true);
+    setTranslationDisplayMode("replace");
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+  });
+
+  it("does not revive cleared paragraphs or overwrite source updates when switching modes", () => {
+    document.body.innerHTML = `<main><p id="first">First sentence.</p><p id="second">Second sentence.</p></main>`;
+    stubLayout();
+    const segments = collectTextSegments();
+    renderTranslations(segments.map((segment) => ({ id: segment.id, text: "已有译文" })), "replace");
+    clearTranslationsIn(document.querySelector("#first")!);
+    document.querySelector("#second")!.firstChild!.textContent = "New source text supplied by the website.";
+    setTranslationDisplayMode("bilingual");
+    expect(document.querySelector("#first")?.textContent).toBe("First sentence.");
+    expect(document.querySelector("#second")?.textContent).toBe("New source text supplied by the website.");
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+  });
   it.each(["bilingual", "bilingual-accent"] as const)("keeps authored multiline text inside its column in %s mode", (mode) => {
     document.body.innerHTML = `<div id="profile"><span id="source">すべての魔法少女たちを救うことを願い<br>「円環の理」と呼ばれる神にも等しい<br>存在となった少女。<br></span></div>`;
     stubLayout("rgb(34, 34, 34)", { style: (element) => element.id === "source"

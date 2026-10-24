@@ -1,6 +1,6 @@
-import type { ExtensionSettings, TranslateImageResponse } from "../shared/types";
+import type { ExtensionSettings, ImageTextRegion, TranslateImageResponse } from "../shared/types";
 import { hasRuntimeContext, sendRuntimeRequest } from "./runtime";
-import { renderImageTranslation } from "./image-rendering";
+import { getImageRasterSize, renderImageTranslation } from "./image-rendering";
 
 interface ImageEntry {
   image: HTMLImageElement;
@@ -8,6 +8,8 @@ interface ImageEntry {
   button: HTMLButtonElement;
   status: HTMLDivElement;
   canvas?: HTMLCanvasElement;
+  renderSource?: HTMLImageElement;
+  regions?: ImageTextRegion[];
   busy: boolean;
   showing: boolean;
   replaceSource?: boolean;
@@ -350,6 +352,16 @@ function updateLayout(): void {
       const insetBottom = (px(style.borderBottomWidth) + px(style.paddingBottom)) * scaleY;
       const cx = rect.left + insetLeft, cy = rect.top + insetTop;
       const width = rect.width - insetLeft - insetRight, height = rect.height - insetTop - insetBottom;
+      if (entry.showing && entry.renderSource && entry.regions) {
+        const size = getImageRasterSize(entry.renderSource.naturalWidth, entry.renderSource.naturalHeight,
+          width, height, window.devicePixelRatio || 1);
+        if (size.width > canvas.width || size.height > canvas.height) {
+          canvas.width = size.width; canvas.height = size.height;
+          // Redraw directly from the image (preserving SVG detail), never an
+          // enlarged OCR bitmap. Geometry and translations remain reusable.
+          entry.replaceSource = renderImageTranslation(canvas, entry.renderSource, entry.regions);
+        }
+      }
       Object.assign(canvas.style, {
         left: `${cx}px`, top: `${cy}px`, width: `${width}px`, height: `${height}px`,
         objectFit: entry.presentation ? (/^(cover|contain)$/.test(style.backgroundSize) ? style.backgroundSize : "fill") : style.objectFit || "fill",
@@ -386,7 +398,7 @@ async function translateImage(entry: ImageEntry): Promise<void> {
   entry.busy = true; entry.button.disabled = true; entry.button.textContent = "…";
   entry.status.textContent = "正在识别并翻译图片文字…"; updateLayout();
   try {
-    const source = await readImage(entry.image);
+    const { canvas: source, image: renderSource } = await readImage(entry.image, entry.presentation);
     if (!current()) return;
     const result = await sendRuntimeRequest<TranslateImageResponse>({ type: "TRANSLATE_IMAGE",
       dataUrl: source.toDataURL("image/png"), width: source.width, height: source.height,
@@ -398,7 +410,8 @@ async function translateImage(entry: ImageEntry): Promise<void> {
     }
     const canvas = document.createElement("canvas"); canvas.width = source.width; canvas.height = source.height;
     canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", result.regions.map((region) => region.translation).join("\n"));
-    entry.replaceSource = renderImageTranslation(canvas, source, result.regions);
+    entry.renderSource = renderSource; entry.regions = result.regions;
+    entry.replaceSource = renderImageTranslation(canvas, renderSource, result.regions);
     entry.canvas = canvas; entry.showing = true; root!.prepend(canvas);
     entry.status.textContent = result.warning ?? "";
   } catch (error) {
@@ -415,24 +428,23 @@ function updateButton(entry: ImageEntry): void {
   entry.button.setAttribute("aria-pressed", String(entry.showing));
 }
 
-async function readImage(image: HTMLImageElement): Promise<HTMLCanvasElement> {
+async function readImage(image: HTMLImageElement, presentation?: HTMLElement): Promise<{ canvas: HTMLCanvasElement; image: HTMLImageElement }> {
   const draw = (source: HTMLImageElement): HTMLCanvasElement => {
-    const scale = Math.min(1, 4096 / Math.max(source.naturalWidth, source.naturalHeight),
-      Math.sqrt(16_000_000 / (source.naturalWidth * source.naturalHeight)));
+    const rect = (presentation ?? image).getBoundingClientRect();
+    const size = getImageRasterSize(source.naturalWidth, source.naturalHeight, rect.width, rect.height, window.devicePixelRatio || 1);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+    canvas.width = size.width; canvas.height = size.height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("浏览器无法读取图片。");
     context.drawImage(source, 0, 0, canvas.width, canvas.height);
     canvas.toDataURL("image/png"); // Detect cross-origin canvas restrictions.
     return canvas;
   };
-  try { return draw(image); } catch { /* Fetch a readable copy without changing the page image. */ }
+  try { return { canvas: draw(image), image }; } catch { /* Fetch a readable copy without changing the page image. */ }
   const url = imageSource(image);
   if (!/^https?:/i.test(url)) throw new Error("此图片无法读取，请在普通网页图片上重试。");
   const { dataUrl } = await sendRuntimeRequest<{ dataUrl: string }>({ type: "LOAD_IMAGE", url });
   const copy = new Image(); copy.src = dataUrl;
   await copy.decode();
-  return draw(copy);
+  return { canvas: draw(copy), image: copy };
 }

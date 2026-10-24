@@ -94,6 +94,8 @@ export interface ExtensionSettings {
   activeProviderId: string;
   chunkSize: number;
   concurrency: number;
+  /** Pages to translate on each side of the reading page; null means the whole PDF. */
+  pdfTranslationPageRadius: number | null;
   cacheEnabled: boolean;
   floatingBallEnabled: boolean;
   imageTranslationEnabled?: boolean;

@@ -126,7 +126,7 @@ export function getTranslatedBlockLayout(
   // second line-breaking implementation that can shrink it prematurely.
   const lineHeight = preferredSize * Math.max(sourceLeading, ascent + descent);
   const listItem = /^[•●▪◦·‣⁃]\s/u.test(block.text);
-  const centered = Boolean(pageWidth && block.lines.length === 1 && !listItem && bounds.width < pageWidth * 0.75
+  const centered = Boolean(pageWidth && block.lines.length === 1 && !listItem && !block.tocPart && bounds.width < pageWidth * 0.75
     && Math.abs(bounds.left + bounds.right - pageWidth) < block.fontSize * scale);
   const center = (bounds.left + bounds.right) / 2;
   if (centered) width = Math.min(width, 2 * Math.min(center - availableLeft, horizontalLimit - center));

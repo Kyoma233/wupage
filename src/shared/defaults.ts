@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   activeProviderId: "google-web-translate",
   chunkSize: 1200,
   concurrency: 3,
+  pdfTranslationPageRadius: 5,
   cacheEnabled: true,
   floatingBallEnabled: true,
   imageTranslationEnabled: false,

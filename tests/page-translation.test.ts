@@ -7,7 +7,7 @@ vi.mock("../src/content/runtime", () => ({
   sendRuntimeRequest: vi.fn()
 }));
 
-import { clearPageTranslation, startPageTranslation } from "../src/content/page-translation";
+import { clearPageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "../src/content/page-translation";
 import { sendRuntimeRequest } from "../src/content/runtime";
 
 const settings: ExtensionSettings = {
@@ -16,6 +16,7 @@ const settings: ExtensionSettings = {
   activeProviderId: "zhipu-glm",
   chunkSize: 1200,
   concurrency: 8,
+  pdfTranslationPageRadius: 5,
   cacheEnabled: true,
   floatingBallEnabled: true,
   translateCodeComments: true,
@@ -73,6 +74,47 @@ describe("viewport page translation", () => {
     image.alt = "これは画像として表示される長い作品紹介文です。".repeat(5);
     return image;
   }
+
+  it("reuses completed translations when switching display modes without restarting requests", async () => {
+    document.body.innerHTML = `<main><p>First sentence.</p><p>Second sentence.</p></main>`;
+    translateNormally();
+    await startPageTranslation(settings);
+    const calls = vi.mocked(sendRuntimeRequest).mock.calls.length;
+    for (const mode of ["replace", "bilingual-accent", "bilingual", "replace"] as const) {
+      setPageTranslationDisplayMode(mode);
+      expect([...document.querySelectorAll<HTMLElement>(".wupage-translation")]
+        .every((element) => element.dataset.wupageDisplayMode === mode)).toBe(true);
+      expect(document.querySelectorAll(".wupage-translation")).toHaveLength(2);
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      expect(sendRuntimeRequest).toHaveBeenCalledTimes(calls);
+    }
+    clearPageTranslation();
+    expect(document.querySelectorAll(".wupage-translation")).toHaveLength(0);
+    expect(document.querySelector("main")?.textContent).toBe("First sentence.Second sentence.");
+  });
+
+  it("uses the latest mode for responses already in flight and newly loaded paragraphs", async () => {
+    document.body.innerHTML = `<main><p>Still translating this sentence.</p></main>`;
+    let release!: (result: TranslateBatchResponse) => void;
+    vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const started = startPageTranslation(settings);
+    expect(document.querySelectorAll(".wupage-translation-pending")).toHaveLength(1);
+    setPageTranslationDisplayMode("replace");
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll(".wupage-translation-pending")).toHaveLength(1);
+    release({ translations: ["返回的译文"], cached: 0 });
+    await started;
+    expect(document.querySelector<HTMLElement>(".wupage-translation")?.dataset.wupageDisplayMode).toBe("replace");
+    expect(document.querySelector("p")?.textContent).toBe("返回的译文");
+    setPageTranslationDisplayMode("bilingual-accent");
+    translateNormally();
+    document.querySelector("main")!.insertAdjacentHTML("beforeend", "<p>New paragraph loaded later.</p>");
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation:not(.wupage-translation-pending)"))
+      .toHaveLength(2));
+    expect([...document.querySelectorAll<HTMLElement>(".wupage-translation")]
+      .every((element) => element.dataset.wupageDisplayMode === "bilingual-accent")).toBe(true);
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(2);
+  });
 
   it("translates image paragraphs on scroll without enabling OCR", async () => {
     const image = mountImageText(2500);

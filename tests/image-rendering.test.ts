@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderImageTranslation } from "../src/content/image-rendering";
+import { getImageRasterSize, renderImageTranslation } from "../src/content/image-rendering";
 import type { ImageTextRegion } from "../src/shared/types";
 
 const region: ImageTextRegion = {
@@ -10,6 +10,24 @@ const region: ImageTextRegion = {
 };
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("image translation resolution", () => {
+  it("rasterizes viewBox-only SVGs at displayed device-pixel resolution", () => {
+    expect(getImageRasterSize(300, 130, 900, 390, 2)).toEqual({ width: 1800, height: 780 });
+    expect(getImageRasterSize(300, 130, 900, 390, 1.25)).toEqual({ width: 1125, height: 487 });
+  });
+
+  it("keeps native detail when the displayed image is smaller", () => {
+    expect(getImageRasterSize(1600, 800, 400, 200, 2)).toEqual({ width: 1600, height: 800 });
+  });
+
+  it("retains aspect ratio within the OCR side and pixel limits", () => {
+    const large = getImageRasterSize(8000, 4000, 8000, 4000, 2);
+    expect(large).toEqual({ width: 4096, height: 2048 });
+    const square = getImageRasterSize(300, 300, 6000, 6000, 3);
+    expect(square).toEqual({ width: 4000, height: 4000 });
+  });
+});
 
 function render(background: number[], foreground = [153, 125, 38, 255]) {
   const width = 100, height = 40;

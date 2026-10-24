@@ -23,6 +23,18 @@ describe("normalizeSettings", () => {
   it("preserves a disabled code comment translation setting", () => {
     expect(normalizeSettings({ translateCodeComments: false }).translateCodeComments).toBe(false);
   });
+
+  it("defaults older PDF settings to five pages on each side and supports current-page-only and unlimited", () => {
+    expect(normalizeSettings({}).pdfTranslationPageRadius).toBe(5);
+    expect(normalizeSettings({ pdfTranslationPageRadius: 0 }).pdfTranslationPageRadius).toBe(0);
+    expect(normalizeSettings({ pdfTranslationPageRadius: 12 }).pdfTranslationPageRadius).toBe(12);
+    expect(normalizeSettings({ pdfTranslationPageRadius: null }).pdfTranslationPageRadius).toBeNull();
+    expect(normalizeSettings({ pdfTranslationPageRadius: -3 }).pdfTranslationPageRadius).toBe(0);
+    expect(normalizeSettings({ pdfTranslationPageRadius: 2.7 }).pdfTranslationPageRadius).toBe(3);
+    for (const invalid of ["unlimited", "5", false, NaN, Infinity]) {
+      expect(normalizeSettings({ pdfTranslationPageRadius: invalid }).pdfTranslationPageRadius).toBe(5);
+    }
+  });
   it("only enables image translation with an explicit boolean switch", () => {
     expect(normalizeSettings({ imageTranslationEnabled: true }).imageTranslationEnabled).toBe(true);
     expect(normalizeSettings({ imageTranslationEnabled: "true" }).imageTranslationEnabled).toBe(false);

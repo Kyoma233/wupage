@@ -37,6 +37,7 @@ import { renderPageWithoutText } from "./rendering";
 import { filterVisiblePdfText } from "./visibility";
 import { validatePdfMathTranslation } from "./math";
 import { createFormulaImages, getFormulaViewportRect } from "./math-rendering";
+import { findReadingPage, selectPdfTranslationPages, takeNearestPage } from "./scheduling";
 import "./styles.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -44,6 +45,7 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 const PDF_DOWNLOAD_TIMEOUT_MS = 30_000;
 const PDF_OPEN_TIMEOUT_MS = 45_000;
 const TRANSLATION_PAGE_TIMEOUT_MS = 120_000;
+const TRANSLATION_SCROLL_DELAY_MS = 200;
 
 interface PdfPageState {
   pageNumber: number;
@@ -62,7 +64,28 @@ interface PdfPageState {
   translationPrompt: HTMLElement;
   translationLayerObserver?: ResizeObserver;
   translations?: string[];
+  translationContext?: string;
+  translationPending?: boolean;
   renderViewport?: ReturnType<PDFPageProxy["getViewport"]>;
+}
+
+interface PdfTranslationSession {
+  runId: number;
+  radius: number | null;
+  requestOptions: { sourceLang: string; targetLang: string; providerId: string };
+  context: string;
+  readingPage: number;
+  scopePages: PdfPageState[];
+  pending: Set<PdfPageState>;
+  active: Set<PdfPageState>;
+  failed: Set<PdfPageState>;
+  followReading: boolean;
+  scrolling: boolean;
+  busy: boolean;
+  completed: number;
+  translated: number;
+  cached: number;
+  failedPages: number;
 }
 
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -101,6 +124,8 @@ let renderedPages = new Set<number>();
 let pageRenderTasks = new Map<number, Promise<void>>();
 let renderObserver: IntersectionObserver | undefined;
 let pendingSource: { url: string; autoTranslate: boolean } | undefined;
+let translationSession: PdfTranslationSession | undefined;
+let translationScrollTimer: number | undefined;
 
 void init();
 
@@ -109,6 +134,7 @@ async function init(): Promise<void> {
   renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
   renderLanguageOptions(targetLang, settings.targetLang, TARGET_LANGUAGES);
   renderProviders();
+  updateTranslationScopeControl();
   bindEvents();
 
   const launchOptions = getPdfLaunchOptions(window.location.href);
@@ -169,9 +195,31 @@ function bindEvents(): void {
   });
   downloadButton.addEventListener("click", () => void downloadTranslatedDocument());
   translateButton.addEventListener("click", () => void translateDocument());
-  sourceLang.addEventListener("change", () => void saveReaderSettings());
-  targetLang.addEventListener("change", () => void saveReaderSettings());
-  provider.addEventListener("change", () => void saveReaderSettings());
+  sourceLang.addEventListener("change", onReaderSettingsChange);
+  targetLang.addEventListener("change", onReaderSettingsChange);
+  provider.addEventListener("change", onReaderSettingsChange);
+  window.addEventListener("scroll", scheduleReadingTranslation, { passive: true });
+  window.addEventListener("resize", scheduleReadingTranslation);
+  window.addEventListener("pagehide", () => {
+    window.clearTimeout(translationScrollTimer);
+    translationSession = undefined;
+    translationRun += 1;
+    window.removeEventListener("scroll", scheduleReadingTranslation);
+    window.removeEventListener("resize", scheduleReadingTranslation);
+  }, { once: true });
+}
+
+function onReaderSettingsChange(): void {
+  // A different language or service requires an explicit start with that config.
+  const session = translationSession;
+  if (session) {
+    session.followReading = false;
+    session.pending.clear();
+    session.scrolling = false;
+    window.clearTimeout(translationScrollTimer);
+    pumpTranslationQueue(session);
+  }
+  void saveReaderSettings();
 }
 
 async function openLocalPdf(file: File): Promise<void> {
@@ -245,6 +293,8 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
   fileAccessNotice.hidden = true;
   showLoading("正在打开 PDF", "正在读取文档结构…");
   translationRun += 1;
+  translationSession = undefined;
+  window.clearTimeout(translationScrollTimer);
   translateButton.classList.remove("is-loading");
   translateButton.disabled = true;
   pageStates.forEach((page) => {
@@ -274,7 +324,7 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
   const optionalContent = await documentProxy.getOptionalContentConfig?.({ intent: "display" });
   currentDocumentName = cleanFileName(name);
   documentName.textContent = currentDocumentName;
-  documentMeta.textContent = `${documentProxy.numPages} 页`;
+  updateTranslationScopeControl();
 
   setupRenderObserver();
   const parsedPages = Array<{
@@ -353,7 +403,7 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
   hideLoading();
   showStatus(
     pageStates.some((page) => page.blocks.some((block) => block.translatable))
-      ? "文档已打开，点击“翻译全文”开始翻译。"
+      ? `文档已打开，点击“${translateButton.textContent?.trim()}”开始翻译。`
       : "未检测到可翻译文字，这可能是一份扫描版 PDF。",
     pageStates.some((page) => page.blocks.some((block) => block.translatable)) ? "success" : "error"
   );
@@ -402,7 +452,7 @@ function createPageState(
   translationViewport.append(translationLayer);
   const prompt = document.createElement("p");
   prompt.className = "translation-prompt";
-  prompt.textContent = blocks.length ? "等待翻译" : "此页未检测到可翻译文字";
+  prompt.textContent = blocks.length ? "此页尚未翻译；开始翻译后，滚动会自动补译附近页面。" : "此页未检测到可翻译文字";
   translatedCanvasShell.append(translatedCanvas, translationViewport, prompt);
   translatedPanel.append(translatedCanvasShell);
 
@@ -468,7 +518,7 @@ async function renderPdfPageOnce(pageState: PdfPageState): Promise<void> {
   await renderPageWithoutText(page, pageState.translatedBaseCanvas, viewport);
   renderedPages.add(pageState.pageNumber);
   pageState.canvasShell.classList.add("is-rendered");
-  if (pageState.translations) renderTranslatedPdfPage(pageState);
+  if (pageState.translations && !pageState.translationPending) renderTranslatedPdfPage(pageState);
 }
 
 async function renderOriginalTextLayer(
@@ -544,6 +594,7 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
     ? sampleTextColor(originalContext, layout.lineRects, backgrounds[index])
     : "#202826"
   );
+  const titleBackgrounds: Array<{ x: number; y: number; width: number; height: number; color: RgbColor }> = [];
   // Fraction bars and some symbol outlines are vector paths, so suppressing
   // fillText alone leaves them behind at the formula's old inline position.
   for (const formula of pageState.blocks.flatMap((block) => block.formulas ?? [])) {
@@ -572,11 +623,20 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
       layout.block,
       layout.lineRects,
       viewport.scale,
-      findAvailableHorizontalRight(rectangleGroups, index, target.width),
+      findAvailableHorizontalRight(layout.block.tocPart === "title"
+        ? rectangleGroups.map((rects, position) => layouts[position].block.tocPart === "leader" ? [] : rects)
+        : rectangleGroups, index, target.width),
       target.width,
       findAvailableHorizontalLeft(rectangleGroups, index)
     );
     if (!blockLayout || !text.trim()) return;
+    if (layout.block.tocPart === "title") {
+      // A longer translated title can use the beginning of the dotted run.
+      // Clear that part after copying preserved glyphs, keeping the locator
+      // at its original right edge and preventing dots behind the title.
+      titleBackgrounds.push({ x: blockLayout.left, y: blockLayout.top, width: blockLayout.width,
+        height: blockLayout.height, color: backgrounds[index][0] ?? [255, 255, 255] });
+    }
     const editableBlock = createEditableTranslationBlock(pageState.translationLayer, {
       id: layout.block.id,
       text,
@@ -606,6 +666,10 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
     pageState.translationLayer.append(editableBlock);
     fitTranslationBlock(editableBlock);
   });
+  for (const rect of titleBackgrounds) {
+    context.fillStyle = toCssRgb(rect.color);
+    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+  }
   syncTranslationLayer(pageState);
   if (!pageState.translationLayerObserver) {
     pageState.translationLayerObserver = new ResizeObserver(() => syncTranslationLayer(pageState));
@@ -717,9 +781,28 @@ function syncTranslationLayer(pageState: PdfPageState): void {
   pageState.translationLayer.style.setProperty("--translation-ui-scale", String(1 / layerScale));
 }
 
+function getReadingPageNumber(): number {
+  const toolbarBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 75;
+  const readingY = toolbarBottom + Math.max(0, window.innerHeight - toolbarBottom) * 0.25;
+  return findReadingPage(pageStates, (page) => page.canvasShell.getBoundingClientRect(), readingY)?.pageNumber ?? 1;
+}
+
+function updateTranslationScopeControl(): void {
+  const radius = settings.pdfTranslationPageRadius;
+  translateButton.querySelector("span")!.textContent = radius === null ? "翻译全文" : "翻译附近页面";
+  translateButton.title = radius === null ? "翻译整份 PDF" : radius === 0
+    ? "仅翻译当前页，滚动后自动补译；在扩展设置中调整翻译范围"
+    : `翻译当前页及前后各 ${radius} 页，滚动后自动补译；在扩展设置中调整翻译范围`;
+  if (pdfDocument) documentMeta.textContent = `${pdfDocument.numPages} 页 · ${radius === null ? "全文" : `前后各 ${radius} 页`}`;
+}
+
 async function translateDocument(): Promise<void> {
-  if (!pdfDocument || !pageStates.length || translateButton.classList.contains("is-loading")) return;
+  if (!pdfDocument || !pageStates.length || translateButton.classList.contains("is-loading")
+    || downloadButton.classList.contains("is-loading")) return;
+  const startingPage = getReadingPageNumber();
   const runId = ++translationRun;
+  translationSession = undefined;
+  window.clearTimeout(translationScrollTimer);
   translateButton.disabled = true;
   downloadButton.disabled = true;
   translateButton.classList.add("is-loading");
@@ -735,83 +818,138 @@ async function translateDocument(): Promise<void> {
     return;
   }
   if (runId !== translationRun) return;
-  let completed = 0;
-  let translated = 0;
-  let cached = 0;
-  let failedPages = 0;
-  const runnablePages = pageStates.filter((page) => page.blocks.some((block) => block.translatable));
+  const requestOptions = { sourceLang: sourceLang.value, targetLang: targetLang.value, providerId: provider.value };
+  const context = JSON.stringify([requestOptions, settings.providers.find((entry) => entry.id === requestOptions.providerId)]);
+  const session: PdfTranslationSession = {
+    runId, radius: settings.pdfTranslationPageRadius, requestOptions, context,
+    readingPage: startingPage, scopePages: [], pending: new Set(), active: new Set(), failed: new Set(),
+    followReading: true, scrolling: false, busy: true, completed: 0, translated: 0, cached: 0, failedPages: 0
+  };
+  translationSession = session;
+  refreshTranslationRange(session);
+  pumpTranslationQueue(session);
+}
 
-  for (const page of runnablePages) renderTranslationSkeleton(page);
-  showStatus(`正在翻译 0 / ${runnablePages.length} 页…`, "info", true);
+function scheduleReadingTranslation(): void {
+  const session = translationSession;
+  if (!session?.followReading) return;
+  // Stop dispatching while the viewport is moving; keep at most the two
+  // requests already in flight, then replace the waiting range after it settles.
+  session.scrolling = true;
+  window.clearTimeout(translationScrollTimer);
+  translationScrollTimer = window.setTimeout(() => {
+    if (translationSession !== session) return;
+    session.scrolling = false;
+    session.readingPage = getReadingPageNumber();
+    refreshTranslationRange(session);
+    pumpTranslationQueue(session);
+  }, TRANSLATION_SCROLL_DELAY_MS);
+}
 
-  let cursor = 0;
-  async function worker(): Promise<void> {
-    while (cursor < runnablePages.length && runId === translationRun) {
-      const index = cursor;
-      cursor += 1;
-      const page = runnablePages[index];
-      try {
-        const translatableBlocks = page.blocks.filter((block) => block.translatable);
-        const result = await withTimeout(
-          sendRuntimeMessage<TranslateBatchResponse>({
-            type: "TRANSLATE_BATCH",
-            texts: translatableBlocks.map((block) => block.text),
-            preservePlaceholders: true,
-            sourceLang: sourceLang.value,
-            targetLang: targetLang.value,
-            providerId: provider.value
-          } satisfies RuntimeRequest),
-          TRANSLATION_PAGE_TIMEOUT_MS,
-          `第 ${page.pageNumber} 页翻译`
-        );
-        if (runId !== translationRun) return;
-        let translationIndex = 0;
-        const translations = page.blocks.map((block) => {
-          if (!block.translatable) return block.text;
-          const translation = result.translations[translationIndex] ?? block.text;
-          translationIndex += 1;
-          validatePdfMathTranslation(translation, block.formulas);
-          return translation;
-        });
-        renderPageTranslations(page, translations);
-        translated += result.translations.length;
-        cached += result.cached;
-      } catch (error) {
-        if (runId !== translationRun) return;
-        failedPages += 1;
-        renderPageError(page, error);
-      } finally {
-        if (runId !== translationRun) return;
-        completed += 1;
-        const percentage = Math.round((completed / runnablePages.length) * 100);
-        progressBar.style.width = `${percentage}%`;
-        showStatus(`正在翻译 ${completed} / ${runnablePages.length} 页…`, "info", true);
+function refreshTranslationRange(session: PdfTranslationSession): void {
+  session.scopePages = selectPdfTranslationPages(pageStates, session.readingPage, session.radius);
+  session.pending.clear();
+  for (const page of session.scopePages) {
+    if (page.translations && page.translationContext === session.context) {
+      if (page.translatedCanvasShell.classList.contains("has-error")) {
+        renderPageTranslations(page, page.translations, session.context);
       }
+    } else if (page.blocks.some((block) => block.translatable) && !session.active.has(page) && !session.failed.has(page)) {
+      session.pending.add(page);
     }
   }
+}
 
-  await Promise.all(Array.from({ length: Math.min(2, runnablePages.length) }, () => worker()));
-  if (runId !== translationRun) return;
+function pumpTranslationQueue(session: PdfTranslationSession): void {
+  if (translationSession !== session || session.runId !== translationRun || session.scrolling
+    || downloadButton.classList.contains("is-loading")) return;
+  if (session.pending.size && !session.busy) {
+    session.busy = true;
+    session.completed = session.translated = session.cached = session.failedPages = 0;
+  }
+  while (session.pending.size && session.active.size < 2) {
+    const page = takeNearestPage(session.pending, session.readingPage)!;
+    session.active.add(page);
+    renderTranslationSkeleton(page);
+    void translatePage(session, page);
+  }
+  if (session.active.size || session.pending.size) {
+    translateButton.disabled = true;
+    translateButton.classList.add("is-loading");
+    updateDownloadButtonState();
+    const total = session.completed + session.active.size + session.pending.size;
+    progressBar.style.width = `${Math.round(session.completed / total * 100)}%`;
+    const label = session.radius === null ? "全文"
+      : `第 ${session.scopePages[0].pageNumber}–${session.scopePages.at(-1)!.pageNumber} 页`;
+    showStatus(`正在翻译${label}：${session.completed} / ${total} 页…`, "info", true);
+  } else if (session.busy) {
+    finishTranslationBatch(session);
+  }
+}
+
+async function translatePage(session: PdfTranslationSession, page: PdfPageState): Promise<void> {
+  try {
+    const translatableBlocks = page.blocks.filter((block) => block.translatable);
+    const result = await withTimeout(
+      sendRuntimeMessage<TranslateBatchResponse>({
+        type: "TRANSLATE_BATCH", texts: translatableBlocks.map((block) => block.text),
+        preservePlaceholders: true, ...session.requestOptions
+      } satisfies RuntimeRequest),
+      TRANSLATION_PAGE_TIMEOUT_MS, `第 ${page.pageNumber} 页翻译`
+    );
+    if (translationSession !== session) return;
+    let translationIndex = 0;
+    const translations = page.blocks.map((block) => {
+      if (!block.translatable) return block.text;
+      const translation = result.translations[translationIndex++] ?? block.text;
+      validatePdfMathTranslation(translation, block.formulas);
+      return translation;
+    });
+    renderPageTranslations(page, translations, session.context);
+    session.translated += result.translations.length;
+    session.cached += result.cached;
+  } catch (error) {
+    if (translationSession !== session) return;
+    session.failed.add(page); // Retry explicitly, never repeatedly on scroll.
+    session.failedPages += 1;
+    renderPageError(page, error);
+  } finally {
+    if (translationSession === session) {
+      session.active.delete(page);
+      session.completed += 1;
+      pumpTranslationQueue(session);
+    }
+  }
+}
+
+function finishTranslationBatch(session: PdfTranslationSession): void {
+  session.busy = false;
   translateButton.disabled = false;
   translateButton.classList.remove("is-loading");
   updateDownloadButtonState();
-  if (failedPages) {
-    showStatus(`翻译完成：${translated} 段成功，${failedPages} 页失败。`, "error");
+  if (session.failedPages) {
+    showStatus(`翻译完成：${session.translated} 段成功，${session.failedPages} 页失败，可点击翻译按钮重试。`, "error");
   } else {
-    showStatus(`翻译完成：${translated} 段译文，缓存命中 ${cached} 段。`, "success");
+    const detail = session.radius === null || !session.followReading ? "" : "滚动后自动补译附近尚未翻译的页面。";
+    showStatus(`翻译完成：${session.translated} 段译文，缓存命中 ${session.cached} 段。${detail}`, "success");
   }
-  window.setTimeout(() => { progressBar.style.width = "0%"; }, 1200);
+  window.setTimeout(() => {
+    if (translationSession === session && !session.busy) progressBar.style.width = "0%";
+  }, 1200);
 }
 
 function renderTranslationSkeleton(page: PdfPageState): void {
+  page.translationPending = true;
   page.translatedCanvasShell.className = "canvas-shell translation-canvas-shell is-loading";
   page.translationLayer.replaceChildren();
   page.translationPrompt.hidden = false;
   page.translationPrompt.textContent = "正在生成版式译文…";
 }
 
-function renderPageTranslations(page: PdfPageState, translations: string[]): void {
+function renderPageTranslations(page: PdfPageState, translations: string[], context: string): void {
   page.translations = translations;
+  page.translationContext = context;
+  page.translationPending = false;
   if (renderedPages.has(page.pageNumber)) renderTranslatedPdfPage(page);
 }
 
@@ -856,7 +994,10 @@ async function downloadTranslatedDocument(): Promise<void> {
     downloadButton.classList.remove("is-loading");
     downloadButton.textContent = "下载译文";
     updateDownloadButtonState();
-    window.setTimeout(() => { progressBar.style.width = "0%"; }, 1200);
+    if (translationSession) pumpTranslationQueue(translationSession);
+    window.setTimeout(() => {
+      if (!translateButton.classList.contains("is-loading")) progressBar.style.width = "0%";
+    }, 1200);
   }
 }
 
@@ -873,6 +1014,7 @@ function updateDownloadButtonState(): void {
 }
 
 function renderPageError(page: PdfPageState, error: unknown): void {
+  page.translationPending = false;
   page.translatedCanvasShell.className = "canvas-shell translation-canvas-shell has-error";
   page.translationLayer.replaceChildren();
   page.translationPrompt.hidden = false;
@@ -888,12 +1030,16 @@ function formatTranslationError(error: unknown): string {
 }
 
 async function saveReaderSettings(): Promise<void> {
-  settings = {
-    ...settings,
+  const readerSettings = {
     sourceLang: sourceLang.value || "auto",
     targetLang: targetLang.value || "zh-CN",
     activeProviderId: provider.value || settings.activeProviderId
   };
+  settings = {
+    ...await loadSettings(),
+    ...readerSettings
+  };
+  updateTranslationScopeControl();
   if (hasExtensionRuntime()) {
     await sendRuntimeMessage({ type: "SAVE_SETTINGS", settings });
   }
