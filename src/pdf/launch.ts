@@ -17,6 +17,7 @@ export function isLikelyPdfUrl(value: string | undefined): boolean {
 }
 
 export function getExtensionDetailsUrl(extensionId: string, userAgent: string): string {
+  if (/Firefox\//.test(userAgent)) return "about:addons";
   const scheme = /Edg\//.test(userAgent) ? "edge" : "chrome";
   return `${scheme}://extensions/?id=${encodeURIComponent(extensionId)}`;
 }

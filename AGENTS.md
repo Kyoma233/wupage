@@ -37,6 +37,12 @@ git push origin main v1.1.0
 
 带预发布后缀的标签会自动创建 GitHub Prerelease。成功发布后，工作流还会触发项目网站的版本同步。
 
+### Firefox 构建
+
+`npm run build:firefox` 从共享 Manifest 生成 `dist-firefox/`，最低 Firefox 154。`browser_specific_settings.gecko.id` 固定为 `wupage@mr-wuliu.github.io`，正式提交 AMO 后不得随意变更。数据传输声明包含 `websiteContent` 和 `authenticationInfo`，后者对应用户配置后发送给服务商的 API 凭据；功能的数据处理行为变化时须同步检查声明。
+
+标签发布会同时生成 `wupage-<version>-firefox.zip`、`wupage-<version>-firefox-source.zip` 和 SHA-256 文件。源码包由 `scripts/package-firefox-source.py` 从指定 Git 提交生成，并附英文构建与审核说明；不包含依赖目录、测试资料目录和凭据。Firefox ZIP 未经 Mozilla 签名，不等同于可长期安装的商店版本。尚未配置 AMO 自动提交或签名；首次通过 AMO 开发者中心提交发布，后续接入时不得将任何 AMO 凭据写入仓库。
+
 ### 自动同步到 Microsoft Edge Add-ons
 
 项目支持通过 [微软官方的 Edge Add-ons Publish API](https://learn.microsoft.com/en-us/microsoft-edge/extensions/update/api/using-addons-api) 自动上传 Release ZIP 并提交审核。扩展需要已在商店完成首次发布。

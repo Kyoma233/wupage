@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/icons/icon-128.png" width="96" height="96" alt="WuPage Translator" />
   <h1>WuPage Translator</h1>
-  <p>适用于 Microsoft Edge 和 Chrome 的网页、图片与 PDF 翻译扩展。</p>
+  <p>适用于 Microsoft Edge、Chrome 和 Firefox 的网页、图片与 PDF 翻译扩展。</p>
   <p>支持全文翻译、段落翻译、双语对照和 PDF 译文编辑，可配置多种翻译服务。</p>
   <p>
     <a href="https://microsoftedge.microsoft.com/addons/detail/wupage-translator/ophhojnppohaklhcdaheplkodopmplfg">Microsoft Edge 插件商店</a> ·
@@ -44,6 +44,17 @@
 Chrome 与 Edge 使用同一发布包。手动更新时，将新版文件解压到原安装目录并替换旧文件，然后在扩展管理页重新加载扩展。
 
 安装或更新后，刷新已打开的网页。
+
+### Firefox（测试版）
+
+需要 Firefox 154 或更新版本，使用独立的 Firefox 构建。当前尚未提供商店安装或 Mozilla 签名包。
+
+1. 按照[开发指南](docs/development.md#firefox-构建与验证)生成 `dist-firefox/`，或解压 Firefox 测试包。
+2. 打开 `about:debugging#/runtime/this-firefox`，点击「临时载入附加组件」。
+3. 选择 `dist-firefox/manifest.json`，或解压目录中的 `manifest.json`。
+4. 刷新需要翻译的网页。
+
+临时加载的扩展会在退出 Firefox 后移除，下次启动需重新加载。Edge / Chrome 安装包不能用于 Firefox。
 
 ## 网页翻译
 
@@ -196,7 +207,7 @@ Google Web Translate 使用非官方网页接口，可能受到限流、地区�
 
 ### Firefox 本地翻译（实验）
 
-使用 Firefox 翻译所采用的 Bergamot 引擎与 Mozilla 语言模型，在 Chrome / Edge 内执行翻译，无需安装 Firefox 或额外的本地服务。
+使用 Firefox 翻译所采用的 Bergamot 引擎与 Mozilla 语言模型，在浏览器内执行翻译，无需额外的本地服务；Chrome / Edge 用户无需安装 Firefox。
 
 1. 打开扩展设置，在「翻译服务」中选择「Firefox 本地翻译（实验）」。
 2. 阅读下载大小、磁盘空间、CPU、内存和耗电说明。

@@ -26,6 +26,31 @@ npm test           # 运行 Vitest 测试
 npm run build      # 生成生产构建到 dist/
 ```
 
+### Firefox 构建与验证
+
+Firefox 需要 154 或更新版本。两种浏览器共用业务源码，分别生成安装目录：
+
+```bash
+npm run build          # Chrome / Edge：dist/
+npm run build:firefox  # Firefox：dist-firefox/
+npm run dev:firefox    # 监听修改并重新生成 Firefox 构建
+```
+
+在 `about:debugging#/runtime/this-firefox` 中临时加载 `dist-firefox/manifest.json`。源码修改后先完成构建，再点击该页的「重新载入」，并刷新普通网页。临时扩展退出浏览器后失效；正式安装需要 Mozilla 签名。
+
+`public/manifest.json` 是共享配置；`build/manifest.ts` 生成 Firefox 的后台脚本、扩展 ID、最低版本和数据传输声明。版本号保持与共享 Manifest 一致。Firefox 154 提供 OCR 依赖的扩展沙箱；Firefox 构建把 OpenCV 内嵌的 WASM 拆成独立文件，保持字节不变，并避免单个脚本超过 AMO 的 5 MB 解析上限。
+
+Firefox 的后台事件页通过隐藏 iframe 托管 OCR 和 Bergamot。仅在模型下载期间发送内部心跳，防止关闭界面后后台空闲卸载；任务结束立即停止。Firefox 的 Bergamot 适配从扩展页面读取随包附带的 WASM 并转交 Worker，支持首次断网启动。Chrome / Edge 继续使用 offscreen 文档与原始 Worker。
+
+```bash
+npm run test:firefox
+npx web-ext lint --source-dir dist-firefox
+```
+
+`test:firefox` 使用本机 Firefox 的 Marionette 测试接口和独立资料目录，不依赖浏览器驱动，不访问日常浏览数据。Windows 默认查找标准安装位置；其他位置或系统可通过 `FIREFOX_BINARY` 指定可执行文件。运行前先构建 Firefox 包。
+
+测试使用本地网页、PDF 与模拟翻译服务，验证设置持久化、三种译文模式、Ollama 请求头、本地和在线 PDF、真实 OCR 识别与缓存、模型删除，以及关闭所有扩展界面超过 30 秒后继续下载模型、首次断网英译中和自动检测。模型从官方地址下载并缓存；Bergamot 也可通过 `LOCAL_MODEL_FIXTURE_DIR` 使用已保存的模型文件。只有临时测试包中的模型下载地址会重定向到本地服务器，生产校验和推理实现保持不变。报告和截图保存在 `.npm-cache/firefox/`。
+
 项目主要目录：
 
 ```text
@@ -68,9 +93,9 @@ npm run build
 
 ### 本地翻译实验与验证
 
-- `firefox-local` 使用固定版本 `@browsermt/bergamot-translator@0.4.9` 的 Worker、JavaScript 和 WASM，构建时复制到 `dist/bergamot-runtime/`。执行代码全部随扩展打包，不在运行时加载远程代码。Manifest 的 `wasm-unsafe-eval` 仅允许 WebAssembly 编译。
+- `firefox-local` 使用固定版本 `@browsermt/bergamot-translator@0.4.9` 的 Worker、JavaScript 和 WASM，构建时复制到对应产物的 `bergamot-runtime/`。Firefox 仅调整 Worker 的 WASM 输入方式，保留相同的引擎与模型字节。执行代码全部随扩展打包，不在运行时加载远程代码。Manifest 的 `wasm-unsafe-eval` 仅允许 WebAssembly 编译。
 - `src/local/catalog.json` 固定 Mozilla Remote Settings 模型目录中的语言方向、版本、官方附件 URL、大小与 SHA-256。运行时无需访问模型目录。更新记录时需同时核对模型、词表和 shortlist，并使用真实模型验证运行库兼容性。
-- OCR 与翻译复用同一个 offscreen 文档；翻译引擎仅在有请求且模型就绪时创建独立 Worker，串行处理任务，切换模型路线时释放旧 Worker，空闲 60 秒后释放运行内存。
+- OCR 与翻译复用同一个运行文档：Chrome / Edge 使用 offscreen，Firefox 使用后台事件页内的隐藏 iframe。翻译引擎仅在有请求且模型就绪时创建独立 Worker，串行处理任务，切换模型路线时释放旧 Worker，空闲 60 秒后释放运行内存。
 - Cache Storage 按文件摘要保存模型与 1 MB 续传片段。网络请求省略凭据；下载、离线导入和推理读入均校验 SHA-256。写操作使用 Web Locks 避免跨设置窗口冲突，清理翻译缓存不影响模型。
 - `npm test` 覆盖没有隐式下载、下载中断与续传、服务器忽略 Range、已完成文件复用、损坏文件拒绝、离线导入、共享文件保留、语言映射、英语中转、自动检测失败提示与单线程限制。
 - `npm run test:local` 使用可选的 Playwright 与 Chromium 加载真实 MV3 扩展，默认从官方 CDN 下载约 51.9 MB 的英译中模型，然后断网验证翻译、自动语言识别、模型持久化和删除。支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`；`LOCAL_MODEL_FIXTURE_DIR` 可指向事先保存的模型文件目录，此时仅在临时测试构建中将该模型的下载地址改为本地 HTTP 服务器，实际制造断流并验证 Range 续传，随后验证断网翻译和离线导入。生产源码、模型字节、校验值与推理引擎均保持原样。报告与截图保存在 `.npm-cache/local-translation/`。

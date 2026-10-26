@@ -1,10 +1,13 @@
 {
   "name": "wupage",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:firefox": "vite build --mode firefox",
+    "dev:firefox": "vite build --mode firefox --watch",
+    "test:firefox": "node scripts/test-firefox.mjs",
     "dev": "vite build --watch",
     "test": "vitest run",
     "test:page": "node scripts/test-page-translation.mjs",

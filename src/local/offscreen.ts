@@ -2,6 +2,7 @@ import { LocalTranslationEngine } from "./engine";
 import { downloadLocalModel, localModelStates, removeLocalModel } from "./model-store";
 import { getLocalModel, getLocalRoute, type LocalModelStatus } from "./models";
 import type { TranslateBatchRequest } from "../shared/types";
+import { withInferenceLifetime } from "../shared/inference-lifetime";
 
 const engine = new LocalTranslationEngine();
 let download: { id: string; controller: AbortController; downloaded: number; settled: Promise<void> } | undefined;
@@ -28,7 +29,7 @@ async function handle(action: string, data?: unknown): Promise<unknown> {
     const job = { id: model.id, controller, downloaded: 0, settled: Promise.resolve() };
     download = job;
     lastError = undefined;
-    job.settled = downloadLocalModel(model.id, controller.signal, (bytes) => { job.downloaded = bytes; })
+    job.settled = withInferenceLifetime(() => downloadLocalModel(model.id, controller.signal, (bytes) => { job.downloaded = bytes; }))
       .catch((error: unknown) => {
         if (!controller.signal.aborted) lastError = { id: model.id, message: `${error instanceof Error ? error.message : String(error)} 已保留完成的数据，可重试或离线导入。` };
       }).finally(() => { if (download === job) download = undefined; });

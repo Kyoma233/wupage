@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release:
-    name: Build and publish Edge package
+    name: Build and publish browser packages
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.github-release.outputs.published }}
@@ -70,11 +70,18 @@ jobs:
       - name: Build extension
         run: npm run build
 
+      - name: Build Firefox extension
+        run: npm run build:firefox
+
       - name: Verify content script bundle
         shell: bash
         run: |
           if head -n 1 dist/content.js | grep -q '^import'; then
             echo "dist/content.js contains a top-level import and cannot run as a classic MV3 content script."
+            exit 1
+          fi
+          if head -n 1 dist-firefox/content.js | grep -q '^import'; then
+            echo "dist-firefox/content.js must be a classic content script."
             exit 1
           fi
 
@@ -94,10 +101,30 @@ jobs:
 
           (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
 
+      - name: Package unsigned Firefox extension for testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_name="wupage-${RELEASE_VERSION}-firefox.zip"
+          (cd dist-firefox && zip -r "../release/$archive_name" .)
+          if ! unzip -Z1 "release/$archive_name" | grep -qx 'manifest.json'; then
+            echo "The Firefox ZIP must contain manifest.json at its root."
+            exit 1
+          fi
+          (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
+
+      - name: Package matching Firefox source for AMO review
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/package-firefox-source.py --output release
+          archive_name="wupage-${RELEASE_VERSION}-firefox-source.zip"
+          (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wupage-${{ github.ref_name }}-edge
+          name: wupage-${{ github.ref_name }}-browsers
           path: release/*
           if-no-files-found: error
 

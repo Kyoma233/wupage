@@ -42,7 +42,15 @@ export class LocalTranslationEngine {
     };
     this.worker.onerror = (event) => { event.preventDefault(); this.release(new Error("本地翻译引擎启动失败，请确认浏览器支持 WebAssembly SIMD，或重新加载扩展。")); };
     this.worker.onmessageerror = () => this.release(new Error("本地翻译消息读取失败，请重试。"));
-    await this.call("initialize", [{ cacheSize: 0, useNativeIntGemm: false }]);
+    // Firefox's offline mode permits extension-page fetches but rejects the
+    // worker's first fetch of packaged WASM. Transfer it from this page instead.
+    let wasmBinary: ArrayBuffer | undefined;
+    if (import.meta.env.MODE === "firefox") {
+      const response = await fetch(chrome.runtime.getURL("bergamot-runtime/bergamot-translator-worker.wasm"));
+      if (!response.ok) throw new Error("本地翻译运行库读取失败，请重新加载扩展。");
+      wasmBinary = await response.arrayBuffer();
+    }
+    await this.call("initialize", [{ cacheSize: 0, useNativeIntGemm: false, ...(wasmBinary ? { wasmBinary } : {}) }], wasmBinary ? [wasmBinary] : []);
     for (const model of route) {
       const files = await readLocalModel(model.id);
       const vocabs = files.vocab ? [files.vocab, files.vocab] : [files.srcvocab, files.trgvocab];

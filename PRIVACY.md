@@ -2,7 +2,7 @@
 
 Effective date: October 27, 2026
 
-WuPage is a Microsoft Edge and Chromium-compatible browser extension that translates webpage text using a translation provider selected and configured by the user.
+WuPage is a Firefox, Microsoft Edge and Chromium-compatible browser extension that translates webpage text using a translation provider selected and configured by the user.
 
 ## Data WuPage Processes
 

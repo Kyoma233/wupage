@@ -17,7 +17,7 @@ beforeEach(async () => {
     rules.push(...(options.addRules ?? []));
   });
   vi.stubGlobal("chrome", {
-    runtime: { id: "test-extension" },
+    runtime: { id: "test-extension", getURL: (path: string) => `chrome-extension://test-extension${path}` },
     declarativeNetRequest: { getSessionRules: vi.fn(async () => [...rules]), updateSessionRules: updateRules }
   });
   compatibility = await import("../src/background/ollama-compatibility");
@@ -59,6 +59,13 @@ describe("OpenAI endpoint compatibility", () => {
 
 describe("Ollama request origin compatibility", () => {
   const endpoint = "http://[::1]:11434/v1/chat/completions?key=test";
+
+  it("scopes Firefox rules to the extension UUID rather than its manifest ID", async () => {
+    chrome.runtime.getURL = () => "moz-extension://0a123456-1234-5678-9012-123456789012/";
+    await compatibility.withOllamaCompatibility(endpoint, async () => {
+      expect(rules[0].condition.initiatorDomains).toEqual(["0a123456-1234-5678-9012-123456789012"]);
+    });
+  });
 
   it("limits the rule to this extension's exact POST endpoint and removes it after completion", async () => {
     await compatibility.withOllamaCompatibility(endpoint, async () => {

@@ -262,7 +262,7 @@ async function openPdfUrl(value: string): Promise<boolean> {
 
   fileAccessNotice.hidden = true;
   try {
-    if (local && (!hasExtensionRuntime() || !await chrome.extension.isAllowedFileSchemeAccess())) {
+    if (local && (!hasExtensionRuntime() || (chrome.extension.isAllowedFileSchemeAccess && !await chrome.extension.isAllowedFileSchemeAccess()))) {
       fileAccessNotice.hidden = false;
       fileAccessSettingsButton.hidden = !hasExtensionRuntime();
       showStatus("请允许访问文件网址后重试，或直接选择这份 PDF 文件。", "info", true);
