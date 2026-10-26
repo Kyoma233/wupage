@@ -20,6 +20,11 @@ export default defineConfig({
       for (const file of ["ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm"]) {
         await copyFile(resolve(__dirname, "node_modules/onnxruntime-web/dist", file), resolve(output, file));
       }
+      const bergamotOutput = resolve(__dirname, "dist/bergamot-runtime");
+      await mkdir(bergamotOutput, { recursive: true });
+      for (const file of ["translator-worker.js", "bergamot-translator-worker.js", "bergamot-translator-worker.wasm"]) {
+        await copyFile(resolve(__dirname, "node_modules/@browsermt/bergamot-translator/worker", file), resolve(bergamotOutput, file));
+      }
     }
   }],
   build: {

@@ -34,7 +34,7 @@
   "permissions": ["storage", "offscreen", "contextMenus", "activeTab", "declarativeNetRequestWithHostAccess"],
   "sandbox": { "pages": ["ocr-sandbox.html"] },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self';",
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
     "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval'; child-src 'self'; connect-src 'self' data: chrome-extension:;"
   },
   "web_accessible_resources": [{ "resources": ["ocr-runtime/*"], "matches": ["<all_urls>"] }],

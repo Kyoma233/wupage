@@ -1,0 +1,18 @@
+Bergamot Translator 0.4.9
+Copyright the Bergamot Translator contributors.
+Licensed under the Mozilla Public License, version 2.0.
+
+This directory contains unmodified upstream translator-worker.js,
+bergamot-translator-worker.js, and bergamot-translator-worker.wasm.
+
+Source and build instructions:
+https://github.com/browsermt/bergamot-translator
+https://www.npmjs.com/package/@browsermt/bergamot-translator/v/0.4.9
+License: https://www.mozilla.org/MPL/2.0/
+
+Optional translation model data is provided by Mozilla:
+https://github.com/mozilla/translations
+Pinned model records: https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/translations-models/records
+
+Mozilla and Firefox are trademarks of the Mozilla Foundation. WuPage is an
+independent extension and is not affiliated with or endorsed by Mozilla.

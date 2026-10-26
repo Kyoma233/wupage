@@ -1,4 +1,5 @@
 export type ProviderType =
+  | "firefox-local"
   | "google-web-translate"
   | "microsoft-translator"
   | "google-cloud-translation"
@@ -21,6 +22,10 @@ export interface ProviderBaseConfig {
 
 export interface GoogleWebTranslateConfig extends ProviderBaseConfig {
   type: "google-web-translate";
+}
+
+export interface FirefoxLocalConfig extends ProviderBaseConfig {
+  type: "firefox-local";
 }
 
 export interface MicrosoftTranslatorConfig extends ProviderBaseConfig {
@@ -79,6 +84,7 @@ export interface HttpTemplateConfig extends ProviderBaseConfig {
 }
 
 export type ProviderConfig =
+  | FirefoxLocalConfig
   | GoogleWebTranslateConfig
   | MicrosoftTranslatorConfig
   | GoogleCloudTranslationConfig
@@ -187,6 +193,10 @@ export interface TranslatorProvider {
 }
 
 export type RuntimeRequest =
+  | { type: "GET_LOCAL_MODEL_STATUS" }
+  | { type: "INSTALL_LOCAL_MODEL"; modelId: string }
+  | { type: "CANCEL_LOCAL_MODEL_DOWNLOAD" }
+  | { type: "REMOVE_LOCAL_MODEL"; modelId: string }
   | { type: "GET_OCR_STATUS" }
   | { type: "INSTALL_OCR" }
   | { type: "REMOVE_OCR" }

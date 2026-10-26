@@ -79,7 +79,8 @@ describe("normalizeSettings", () => {
       "openai-compatible",
       "deepseek",
       "zhipu-glm",
-      "http-template"
+      "http-template",
+      "firefox-local"
     ]);
   });
 

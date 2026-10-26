@@ -5,6 +5,7 @@ import type { ExtensionSettings } from "../shared/types";
 import "./styles.css";
 import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
 import { isLikelyPdfUrl } from "../pdf/launch";
+import { localProviderNotice } from "../shared/local-notice";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -35,6 +36,7 @@ let pageTranslationAvailable = true;
 void init().catch((error: unknown) => {
   pageTranslationAvailable = false;
   updatePageActionAvailability();
+
   setStatus(error instanceof Error ? error.message : String(error));
 });
 
@@ -47,6 +49,7 @@ async function init(): Promise<void> {
     .map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.label)}</option>`)
     .join("");
   provider.value = settings.activeProviderId;
+  updateLocalNotice();
   translationDisplayMode.innerHTML = TRANSLATION_DISPLAY_MODES
     .map((mode) => `<option value="${mode.value}">${mode.label}</option>`)
     .join("");
@@ -118,6 +121,18 @@ async function savePopupSettings(): Promise<void> {
     translationDisplayMode: translationDisplayMode.value as ExtensionSettings["translationDisplayMode"]
   };
   await sendRuntimeMessage({ type: "SAVE_SETTINGS", settings });
+  updateLocalNotice();
+}
+
+function updateLocalNotice(): void {
+  let notice = document.getElementById("localProviderNotice");
+  const message = localProviderNotice(settings);
+  if (!notice && message) {
+    notice = document.createElement("p"); notice.id = "localProviderNotice";
+    notice.setAttribute("role", "status"); notice.style.cssText = "line-height:1.6;font-size:12px;padding:10px;border:1px solid #c7a557;border-radius:8px";
+    provider.closest("label")?.after(notice);
+  }
+  if (notice) { notice.textContent = message ?? ""; notice.hidden = !message; }
 }
 
 function renderLanguageOptions(

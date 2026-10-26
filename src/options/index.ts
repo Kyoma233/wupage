@@ -5,6 +5,7 @@ import { sendRuntimeMessage } from "../shared/messaging";
 import type { ExtensionSettings, ProviderConfig } from "../shared/types";
 import "./styles.css";
 import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
+import { setupLocalModelControl } from "../local/control";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -57,6 +58,7 @@ const DEFAULT_LLM_PROMPT =
   "You are a translation engine. Translate each input item into {{targetLang}}. Preserve meaning, numbers, links, code-like tokens, placeholders like ⟪WUPAGE0⟫, and formatting. Return only a JSON array of strings in the same order.";
 
 let settings: ExtensionSettings;
+let disposeLocalControl: (() => void) | undefined;
 
 void init().catch((error: unknown) => {
   setStatus(error instanceof Error ? error.message : String(error));
@@ -98,6 +100,8 @@ async function init(): Promise<void> {
   testButton.addEventListener("click", testProvider);
   restoreButton.addEventListener("click", restoreDefaults);
   pdfTranslationScope.addEventListener("change", updatePdfTranslationScope);
+  sourceLang.addEventListener("change", updateLocalControl);
+  targetLang.addEventListener("change", updateLocalControl);
 }
 
 function render(): void {
@@ -198,7 +202,13 @@ function renderProviderMenuRow(provider: ProviderConfig): string {
 }
 
 function renderProviderForm(): void {
+  disposeLocalControl?.(); disposeLocalControl = undefined;
   const provider = getActiveProvider();
+  if (provider.type === "firefox-local") {
+    providerForm.innerHTML = `<div class="grid"><label>显示名称 <input data-field="label" type="text" value="${escapeAttr(provider.label)}" /></label></div><div data-local-model-control></div>`;
+    updateLocalControl();
+    return;
+  }
   if (provider.type === "google-web-translate") {
     setProviderFormMarkup(provider, `
       <div class="grid">
@@ -309,6 +319,13 @@ function renderProviderForm(): void {
     <label>请求头 JSON <textarea data-field="headers">${escapeHtml(JSON.stringify(provider.headers, null, 2))}</textarea></label>
     <label>请求体模板 <textarea data-field="bodyTemplate">${escapeHtml(provider.bodyTemplate)}</textarea></label>
   `);
+}
+
+function updateLocalControl(): void {
+  const container = providerForm.querySelector<HTMLElement>("[data-local-model-control]");
+  if (!container) return;
+  disposeLocalControl?.();
+  disposeLocalControl = setupLocalModelControl(container, sourceLang.value, targetLang.value);
 }
 
 function setProviderFormMarkup(provider: ProviderConfig, markup: string): void {
@@ -545,7 +562,7 @@ async function restoreDefaults(): Promise<void> {
 function readSettingsFromForm(): ExtensionSettings {
   const activeProvider = {
     ...readProviderFromForm(getActiveProvider()),
-    ...readProviderPerformance()
+    ...(getActiveProvider().type === "firefox-local" ? { performanceMode: "custom", chunkSize: 800, concurrency: 1 } : readProviderPerformance())
   } as ProviderConfig;
   return {
     ...settings,
@@ -594,7 +611,7 @@ function readProviderFromForm(provider: ProviderConfig): ProviderConfig {
       `[data-field="${name}"]`
     )?.value ?? "";
 
-  if (provider.type === "google-web-translate") {
+  if (provider.type === "google-web-translate" || provider.type === "firefox-local") {
     return { ...provider, label: field("label").trim() || provider.label };
   }
   if (provider.type === "microsoft-translator") {
