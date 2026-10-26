@@ -121,6 +121,63 @@ try {
   assert.equal(await page.locator(".wupage-translation").count(), 0);
   assert.deepEqual(await page.locator("#rich code").allTextContents(), ["first()", "second()"]);
 
+  // Updates feeds can mix loose list items with paragraph-wrapped items.
+  // Both must put bilingual prose below the source, including one-link items.
+  await page.locator("main").evaluate(node => {
+    node.innerHTML = `<ul id="updates">
+      <li>2026-09-15 - The latest <a href="/release">release</a> improves training and retires support for older versions.</li>
+      <li><p>2025-05-16 - Please upgrade to the latest <a href="/previous">release</a> to continue contributing training games.</p></li>
+      <li>Support for older versions has been retired.</li>
+      <li><a href="/install">Download and install the latest version</a></li>
+    </ul><nav><ul><li><a href="/guide">User guide</a></li></ul></nav>
+    <table><tbody><tr><td>Training status</td></tr></tbody></table>`;
+  });
+  const originalLists = await page.locator("main").innerHTML();
+  const listResult = await message({ type: "TRANSLATE_PAGE" });
+  assert.equal(listResult.ok, true, JSON.stringify(listResult));
+  assert.equal(listResult.data.failed, 0);
+  assert.equal(listResult.data.translated, 6);
+  const listRequests = calls.length;
+  const listReports = [];
+  for (const width of [1000, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["bilingual", "bilingual-accent", "replace"]) {
+      await control.evaluate(async mode => {
+        const { data: settings } = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
+        await chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: { ...settings, translationDisplayMode: mode } });
+      }, mode);
+      await page.waitForFunction(mode => [...document.querySelectorAll(".wupage-translation")]
+        .every(node => node.dataset.wupageDisplayMode === mode), mode);
+      const items = await page.locator("#updates > li").evaluateAll(items => items.map(item => {
+        const output = item.querySelector(".wupage-translation");
+        const sourceRects = [];
+        const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const text = walker.currentNode;
+          if (!text.textContent.trim() || text.parentElement.closest(".wupage-translation")) continue;
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          sourceRects.push(...range.getClientRects());
+        }
+        return { mode: output.dataset.wupageMode, display: getComputedStyle(output).display,
+          top: output.getBoundingClientRect().top, sourceBottom: Math.max(...sourceRects.map(rect => rect.bottom)) };
+      }));
+      for (const item of items) {
+        assert.equal(item.mode, "block");
+        assert.equal(item.display, mode === "replace" ? "inline" : "block");
+        if (mode !== "replace") assert.ok(item.top >= item.sourceBottom - 1, `Translation must follow the source: ${JSON.stringify(item)}`);
+      }
+      assert.deepEqual(await page.locator("nav .wupage-translation, td .wupage-translation")
+        .evaluateAll(outputs => outputs.map(output => getComputedStyle(output).display)), ["inline", "inline"]);
+      assert.equal(await page.locator("#updates").evaluate(node => node.scrollWidth > node.clientWidth + 1), false);
+      assert.equal(calls.length, listRequests, "List mode changes must reuse translations");
+      listReports.push({ width, mode, items });
+      if (mode === "bilingual") await page.screenshot({ path: path.join(output, `lists-${width}.png`) });
+    }
+  }
+  await message({ type: "CLEAR_TRANSLATION" });
+  assert.equal(await page.locator("main").innerHTML(), originalLists);
+
   // Check rendered colors in Chromium: jsdom does not resolve modern CSS color
   // spaces or inherited WebKit text fill, and tiny RGB changes look identical.
   await page.setViewportSize({ width: 1000, height: 900 });
@@ -212,10 +269,10 @@ try {
   await message({ type: "CLEAR_TRANSLATION" });
   assert.equal(await page.locator("main").textContent(), "Current message.");
   assert.deepEqual(errors, []);
-  const report = { modes: modeReports, colors: colorReports, placeholderRecovery: true, paragraphTranslation: true,
+  const report = { modes: modeReports, lists: listReports, colors: colorReports, placeholderRecovery: true, paragraphTranslation: true,
     hiddenAndDraftTextExcluded: true, sourceRestored: true, staleResponseDiscarded: true, errors };
   await fs.writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2));
-  console.log("PASS: built MV3 extension; 6 viewport/mode combinations, 30 rendered color cases, protected text, drafts, Ctrl-click, source restoration and stale responses");
+  console.log("PASS: built MV3 extension; 6 viewport/mode combinations, 6 list layouts, 30 rendered color cases, protected text, drafts, Ctrl-click, source restoration and stale responses");
 } finally {
   releaseSlow?.();
   await context?.close();

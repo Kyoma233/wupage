@@ -567,6 +567,40 @@ describe("content DOM translation extraction", () => {
     ]);
   });
 
+  it("renders ordinary list prose consistently with and without paragraph wrappers", () => {
+    document.body.innerHTML = `<main><ul id="updates">
+      <li>New version <a href="/release">released</a> with improved training.</li>
+      <li><p>Previous version <a href="/previous">released</a> with improved training.</p></li>
+      <li>Support for older versions has been retired.</li>
+      <li><a href="/install">Download and install the latest version</a></li>
+    </ul><nav><ul><li><a href="/guide">User guide</a></li></ul></nav>
+    <table><tbody><tr><td>Training status</td></tr></tbody></table></main>`;
+    stubLayout("", { style: (element) => ({
+      display: element.matches("li") ? "list-item" : element.matches("a") ? "inline"
+        : element.matches("td") ? "table-cell" : "block"
+    }) });
+    const original = document.querySelector("main")!.innerHTML;
+    const segments = collectTextSegments();
+    expect(segments).toHaveLength(6);
+    renderTranslationPlaceholders(segments);
+    expect([...document.querySelectorAll<HTMLElement>("#updates .wupage-translation-pending")]
+      .map((output) => output.dataset.wupageMode)).toEqual(["block", "block", "block", "block"]);
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: `译文：${text}` })));
+    for (const mode of ["replace", "bilingual-accent", "bilingual"] as const) {
+      setTranslationDisplayMode(mode);
+      const outputs = [...document.querySelectorAll<HTMLElement>("#updates .wupage-translation")];
+      expect(outputs).toHaveLength(4);
+      expect(outputs.map((output) => output.dataset.wupageMode)).toEqual(["block", "block", "block", "block"]);
+      expect(outputs.every((output) => output.closest("li")?.parentElement?.id === "updates")).toBe(true);
+      if (mode !== "replace") expect(outputs.every((output) => output.parentElement?.matches("li"))).toBe(true);
+      expect(document.querySelector("#updates a .wupage-translation")).toBeNull();
+      expect(document.querySelector<HTMLElement>("nav .wupage-translation")?.dataset.wupageMode).toBe("inline");
+      expect(document.querySelector<HTMLElement>("td .wupage-translation")?.dataset.wupageMode).toBe("inline");
+    }
+    clearTranslations();
+    expect(document.querySelector("main")!.innerHTML).toBe(original);
+  });
+
   it("excludes unrendered descendants from a grouped paragraph", () => {
     document.body.innerHTML = `
       <p>Visible beginning <span id="hidden">invisible middle</span><em>visible ending.</em></p>

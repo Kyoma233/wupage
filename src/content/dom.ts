@@ -1184,7 +1184,7 @@ function groupTextSegments(
     if (
       groupNodes.length < 2 &&
       text === nodeText &&
-      !block.matches(`summary, label, ${X_POST_TEXT_SELECTOR}`)
+      !block.matches(`summary, label, li, ${X_POST_TEXT_SELECTOR}`)
     ) continue;
     if (!text) continue;
     const authoredLines = isAuthoredLineTextBlock(block);
@@ -1750,6 +1750,9 @@ function isCompactUiElement(element: Element): boolean {
   const display = style.display;
 
   if (element.closest("p")) return false;
+  // Normal list items carry prose even when short or composed of one link.
+  // Navigation and control labels are classified before reaching this check.
+  if (element.matches("li") && display === "list-item") return false;
   if (display === "inline" || display === "inline-block" || display === "inline-flex") {
     return true;
   }
