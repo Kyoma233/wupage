@@ -140,7 +140,7 @@ function isProviderConfig(value: unknown): value is ProviderConfig {
   ) return false;
   if (value.chunkSize !== undefined && typeof value.chunkSize !== "number") return false;
   if (value.concurrency !== undefined && typeof value.concurrency !== "number") return false;
-  if (value.type === "google-web-translate") {
+  if (value.type === "google-web-translate" || value.type === "firefox-local") {
     return ["id", "label"].every((key) => typeof value[key] === "string");
   }
 

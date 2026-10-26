@@ -7,6 +7,7 @@ import type {
   TranslationDebugTask
 } from "../shared/types";
 import { sendRuntimeRequest } from "./runtime";
+import { localProviderNotice } from "../shared/local-notice";
 import {
   clearTranslationsIn,
   collectParagraphTextSegments,
@@ -551,6 +552,16 @@ async function updateMenuState(menu: HTMLElement): Promise<void> {
 }
 
 function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void {
+  let localNotice = menu.querySelector<HTMLElement>("[data-role='local-notice']");
+  const noticeText = localProviderNotice(settings);
+  if (!localNotice && noticeText) {
+    localNotice = document.createElement("p");
+    localNotice.dataset.role = "local-notice";
+    localNotice.setAttribute("role", "status");
+    localNotice.style.cssText = "font-size:12px!important;line-height:1.6!important;margin:8px!important;padding:8px!important;border:1px solid #c7a557!important;border-radius:8px!important";
+    menu.querySelector("[data-role='provider']")?.closest("label")?.after(localNotice);
+  }
+  if (localNotice) { localNotice.textContent = noticeText ?? ""; localNotice.hidden = !noticeText; }
   const sourceLangSelect = menu.querySelector<HTMLSelectElement>("[data-role='source-lang']");
   if (sourceLangSelect) {
     ensureLanguageOption(sourceLangSelect, settings.sourceLang);

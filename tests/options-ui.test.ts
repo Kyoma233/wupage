@@ -104,8 +104,8 @@ describe("options provider controls", () => {
     });
 
     click("#providerTrigger");
-    expect(document.querySelectorAll(".provider-menu-row")).toHaveLength(7);
-    expect(document.querySelectorAll(".provider-enable")).toHaveLength(7);
+    expect(document.querySelectorAll(".provider-menu-row")).toHaveLength(DEFAULT_SETTINGS.providers.length);
+    expect(document.querySelectorAll(".provider-enable")).toHaveLength(DEFAULT_SETTINGS.providers.length);
     expect(document.querySelectorAll(".provider-delete")).toHaveLength(0);
     expect(document.querySelectorAll(".provider-option-type")).toHaveLength(0);
 
@@ -148,7 +148,7 @@ describe("options provider controls", () => {
     await vi.waitFor(() => {
       expect(document.querySelector("#providerTriggerLabel")?.textContent).toBe("My Anthropic");
     });
-    expect(stored.providers).toHaveLength(8);
+    expect(stored.providers).toHaveLength(DEFAULT_SETTINGS.providers.length + 1);
     expect(stored.providers.find((provider) => provider.id === stored.activeProviderId)?.type)
       .toBe("anthropic-compatible");
 
@@ -161,7 +161,7 @@ describe("options provider controls", () => {
 
     click(`[data-action="delete"][data-provider-id="${customId}"]`);
     await vi.waitFor(() => {
-      expect(stored.providers).toHaveLength(7);
+      expect(stored.providers).toHaveLength(DEFAULT_SETTINGS.providers.length);
       expect(document.querySelectorAll(".provider-delete")).toHaveLength(0);
     });
 

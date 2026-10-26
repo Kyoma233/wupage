@@ -72,7 +72,8 @@ async function acquireRule(endpoint: string): Promise<void> {
       condition: {
         regexFilter: `^${endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
         isUrlFilterCaseSensitive: true,
-        initiatorDomains: [chrome.runtime.id],
+        // Firefox's manifest ID differs from its moz-extension UUID hostname.
+        initiatorDomains: [new URL(chrome.runtime.getURL("/")).hostname],
         requestMethods: ["post" as chrome.declarativeNetRequest.RequestMethod],
         resourceTypes: ["xmlhttprequest" as chrome.declarativeNetRequest.ResourceType]
       }

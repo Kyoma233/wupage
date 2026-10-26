@@ -91,6 +91,15 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       bodyTemplate:
         "{\"q\":{{json texts}},\"source\":\"{{sourceLang}}\",\"target\":\"{{targetLang}}\"}",
       responsePath: "translations"
+    },
+    {
+      type: "firefox-local",
+      id: "firefox-local",
+      label: "Firefox 本地翻译（实验）",
+      enabled: true,
+      performanceMode: "custom",
+      chunkSize: 800,
+      concurrency: 1
     }
   ]
 };

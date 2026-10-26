@@ -7,6 +7,7 @@ import { requestOcr } from "./ocr";
 import { installedRevision } from "../ocr/model-store";
 import { initImageContextMenu } from "./image-context-menu";
 import { initializeOllamaCompatibility } from "./ollama-compatibility";
+import { requestLocal } from "./local";
 
 initImageContextMenu();
 void initializeOllamaCompatibility().catch((error: unknown) => console.warn("WuPage Ollama compatibility:", error));
@@ -26,6 +27,14 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
 
 async function handleMessage(request: RuntimeRequest): Promise<unknown> {
   switch (request.type) {
+    case "GET_LOCAL_MODEL_STATUS":
+      return requestLocal("status");
+    case "INSTALL_LOCAL_MODEL":
+      return requestLocal("install", request.modelId);
+    case "CANCEL_LOCAL_MODEL_DOWNLOAD":
+      return requestLocal("cancel");
+    case "REMOVE_LOCAL_MODEL":
+      return requestLocal("remove", request.modelId);
     case "OPEN_OPTIONS_PAGE":
       await chrome.runtime.openOptionsPage();
       return null;

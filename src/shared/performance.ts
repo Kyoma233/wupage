@@ -11,6 +11,9 @@ export function getEffectiveProviderPerformance(
   providerId = settings.activeProviderId
 ): EffectiveProviderPerformance {
   const provider = settings.providers.find((entry) => entry.id === providerId);
+  if (provider?.type === "firefox-local") {
+    return { chunkSize: 800, concurrency: 1, performanceMode: "custom" };
+  }
   const custom = provider?.performanceMode === "custom";
   const chunkSize = custom
     ? clamp(provider.chunkSize, 200, 4000, settings.chunkSize)

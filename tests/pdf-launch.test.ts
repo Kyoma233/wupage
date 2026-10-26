@@ -26,6 +26,8 @@ describe("PDF launch options", () => {
       .toBe("edge://extensions/?id=extension-id");
     expect(getExtensionDetailsUrl("extension-id", "Chrome/130"))
       .toBe("chrome://extensions/?id=extension-id");
+    expect(getExtensionDetailsUrl("wupage@example", "Firefox/158"))
+      .toBe("about:addons");
   });
 
   it("recognizes popup-initiated automatic translation", () => {

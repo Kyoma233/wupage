@@ -19,6 +19,7 @@ export { parseImageRegions } from "./image-regions";
 import { readPath, renderTemplate } from "./template";
 import { chatCompletionsEndpoint, usesOllamaCompatibility, withOllamaCompatibility } from "./ollama-compatibility";
 import { TranslationResponseError } from "./translation-response";
+import { translateLocally } from "./local";
 
 const GOOGLE_WEB_REQUEST_CONCURRENCY = 4;
 const WEB_TRANSLATION_TIMEOUT_MS = 20_000;
@@ -93,6 +94,11 @@ Estimate the original text color and the local background color behind the text.
 }
 
 export function createProvider(config: ProviderConfig): TranslatorProvider {
+  if (config.type === "firefox-local") return {
+    id: config.id, label: config.label,
+    validateConfig: () => ({ ok: true }),
+    translateBatch: translateLocally
+  };
   if (config.type === "google-web-translate") return new GoogleWebTranslateProvider(config);
   if (config.type === "microsoft-translator") return new MicrosoftTranslatorProvider(config);
   if (config.type === "google-cloud-translation") {

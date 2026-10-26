@@ -13,6 +13,7 @@ import { createProvider } from "./providers";
 import { normalizeProtectedText } from "../shared/protected-text";
 import { translateProtectedText } from "./protected-translation";
 import { assertTranslationResponse, TranslationResponseError } from "./translation-response";
+import { LOCAL_MODELS } from "../local/models";
 
 const providerLimiters = new Map<string, ProviderLimiter>();
 const debugTasks: TranslationDebugTask[] = [];
@@ -34,6 +35,7 @@ export async function translateWithSettings(
   // Model/prompt/source-language changes must not keep serving old translations.
   const cacheProviderId = settings.cacheEnabled
     ? `${providerId}.${await sha256(JSON.stringify({ version: 3, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
+      ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
     : providerId;
   const cachedTranslations = new Map<number, string>();
@@ -330,7 +332,7 @@ async function translateProviderTexts(
       translateProviderTexts(providerConfig, provider, { ...part, preservePlaceholders: false }, part.texts)
     );
   }
-  if (isLlmProvider(providerConfig) || !request.context || !texts.length) {
+  if (providerConfig.type === "firefox-local" || isLlmProvider(providerConfig) || !request.context || !texts.length) {
     return provider.translateBatch({ ...request, texts });
   }
 

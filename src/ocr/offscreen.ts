@@ -1,5 +1,7 @@
 import { OCR_CACHE, OCR_DOWNLOAD_BYTES, type OcrLine, type OcrStatus } from "../shared/ocr";
 import { commitModels, downloadModels, installedRevision, readModelBuffers } from "./model-store";
+import "../local/offscreen";
+import { withInferenceLifetime } from "../shared/inference-lifetime";
 
 let state: OcrStatus = { state: "missing", downloaded: 0, total: OCR_DOWNLOAD_BYTES };
 let installing: Promise<void> | undefined;
@@ -73,7 +75,7 @@ async function handle(action: string, dataUrl?: string): Promise<unknown> {
     if (installing || (await status()).state === "installed") return state;
     if (installing) return state;
     state = { state: "installing", total: OCR_DOWNLOAD_BYTES, downloaded: 0 };
-    installing = (async () => {
+    installing = withInferenceLifetime(async () => {
       try {
         await downloadModels((downloaded) => { state = { ...state, downloaded }; });
         // A downloaded file is not an installed model until the runtime can load it.
@@ -85,7 +87,7 @@ async function handle(action: string, dataUrl?: string): Promise<unknown> {
         await caches.delete(OCR_CACHE);
         state = { state: "error", downloaded: 0, total: OCR_DOWNLOAD_BYTES, error: error instanceof Error ? error.message : String(error) };
       } finally { installing = undefined; scheduleRelease(); }
-    })();
+    });
     return state;
   }
   if (action === "remove") {

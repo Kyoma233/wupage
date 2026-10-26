@@ -1,16 +1,20 @@
 {
   "name": "wupage",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:firefox": "vite build --mode firefox",
+    "dev:firefox": "vite build --mode firefox --watch",
+    "test:firefox": "node scripts/test-firefox.mjs",
     "dev": "vite build --watch",
     "test": "vitest run",
     "test:page": "node scripts/test-page-translation.mjs",
     "test:floating": "node scripts/test-floating-interactions.mjs",
     "test:settings": "node scripts/test-settings-initialization.mjs",
     "test:ocr": "node scripts/test-ocr-flow.mjs",
+    "test:local": "node scripts/test-local-translation.mjs",
     "test:pdf": "node scripts/test-pdf-corpus.mjs",
     "test:pdf-scope": "node scripts/test-pdf-scope.mjs",
     "test:github-code": "node scripts/test-github-code-comments.mjs",
@@ -27,6 +31,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@browsermt/bergamot-translator": "0.4.9",
     "@paddleocr/paddleocr-js": "0.4.2",
     "onnxruntime-web": "1.30.0",
     "pdf-lib": "^1.17.1",
