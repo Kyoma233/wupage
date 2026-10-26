@@ -7,8 +7,9 @@ vi.mock("../src/content/runtime", () => ({
   sendRuntimeRequest: vi.fn()
 }));
 
-import { clearPageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "../src/content/page-translation";
+import { clearPageTranslation, hidePageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "../src/content/page-translation";
 import { sendRuntimeRequest } from "../src/content/runtime";
+import { collectParagraphTextSegments, renderTranslations } from "../src/content/dom";
 
 const settings: ExtensionSettings = {
   targetLang: "zh-CN",
@@ -74,6 +75,130 @@ describe("viewport page translation", () => {
     image.alt = "これは画像として表示される長い作品紹介文です。".repeat(5);
     return image;
   }
+
+  it.each(["replace", "bilingual", "bilingual-accent"] as const)("restores saved %s translations without new requests", async (translationDisplayMode) => {
+    document.body.innerHTML = `<main><p>Read <code>guide()</code> carefully.</p><input placeholder="Search documents"></main>`;
+    const original = document.querySelector("main")!.textContent;
+    translateNormally();
+    const options = { ...settings, cacheEnabled: false, translationDisplayMode };
+    const first = await startPageTranslation(options);
+    const calls = vi.mocked(sendRuntimeRequest).mock.calls.length;
+    for (let index = 0; index < 3; index++) {
+      hidePageTranslation();
+      expect(document.querySelector(".wupage-translation")).toBeNull();
+      expect(document.querySelector("main")!.textContent).toBe(original);
+      expect(document.querySelector("input")!.placeholder).toBe("Search documents");
+      const result = await startPageTranslation(options);
+      expect(result).toMatchObject({ translated: first.translated, cached: first.translated, failed: 0 });
+      expect(document.querySelector(".wupage-translation code")?.textContent).toBe("guide()");
+      expect(document.querySelector("input")!.placeholder).toBe("译文：Search documents");
+      expect(sendRuntimeRequest).toHaveBeenCalledTimes(calls);
+    }
+  });
+
+  it("translates only changed and new content when returning from the original view", async () => {
+    document.body.innerHTML = `<main><p id="kept">Keep this paragraph.</p><p id="changed">Old paragraph.</p></main>`;
+    translateNormally();
+    await startPageTranslation(settings);
+    hidePageTranslation();
+    vi.mocked(sendRuntimeRequest).mockClear();
+    document.querySelector("#changed")!.textContent = "New paragraph.";
+    document.querySelector("main")!.insertAdjacentHTML("beforeend", "<p>Appended paragraph.</p>");
+    const result = await startPageTranslation(settings);
+    const requestedTexts = vi.mocked(sendRuntimeRequest).mock.calls.flatMap(([request]) => request.type === "TRANSLATE_BATCH" ? request.texts : []);
+    expect(requestedTexts.sort()).toEqual(["Appended paragraph.", "New paragraph."]);
+    expect(document.querySelector("#kept .wupage-translation")?.textContent).toBe("译文：Keep this paragraph.");
+    expect(result).toMatchObject({ translated: 3, cached: 1, failed: 0 });
+  });
+
+  it("keeps original text visible when changing display mode while translations are hidden", async () => {
+    document.body.innerHTML = "<main><p>Original paragraph.</p></main>";
+    translateNormally();
+    await startPageTranslation(settings);
+    hidePageTranslation();
+    setPageTranslationDisplayMode("replace");
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    expect(document.querySelector("p")!.textContent).toBe("Original paragraph.");
+    await startPageTranslation({ ...settings, translationDisplayMode: "replace" });
+    expect(document.querySelector<HTMLElement>(".wupage-translation")!.dataset.wupageDisplayMode).toBe("replace");
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides paragraph results added while the page translation is suspended", async () => {
+    document.body.innerHTML = "<main><p>Original paragraph.</p></main>";
+    translateNormally();
+    await startPageTranslation(settings);
+    hidePageTranslation();
+    const paragraph = document.querySelector("p")!;
+    const [segment] = collectParagraphTextSegments(paragraph);
+    renderTranslations([{ id: segment.id, text: "单独翻译的段落。" }]);
+    expect(document.querySelector(".wupage-translation")).not.toBeNull();
+    hidePageTranslation();
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    expect(paragraph.textContent).toBe("Original paragraph.");
+  });
+
+  it("invalidates saved rich text when protected code changes while showing the original", async () => {
+    document.body.innerHTML = "<main><p>Read <code>oldGuide()</code> carefully.</p></main>";
+    translateNormally();
+    await startPageTranslation(settings);
+    hidePageTranslation();
+    hidePageTranslation();
+    document.querySelector("code")!.firstChild!.textContent = "newGuide()";
+    const result = await startPageTranslation(settings);
+    expect(result.cached).toBe(0);
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(2);
+    expect(document.querySelector(".wupage-translation code")?.textContent).toBe("newGuide()");
+  });
+
+  it("keeps saved image paragraphs when switching back to the translated view", async () => {
+    const image = mountImageText();
+    translateNormally();
+    await startPageTranslation({ ...settings, translationDisplayMode: "replace" });
+    hidePageTranslation();
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    const result = await startPageTranslation({ ...settings, translationDisplayMode: "bilingual" });
+    expect(result.cached).toBe(1);
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+    expect(image.closest("picture")!.nextElementSibling?.textContent).toBe(`译文：${image.alt}`);
+  });
+
+  it("does not reuse saved results after changing language or provider configuration", async () => {
+    document.body.innerHTML = "<main><p>Original paragraph.</p></main>";
+    translateNormally();
+    let options: ExtensionSettings = { ...settings, providers: [{ type: "google-web-translate", id: settings.activeProviderId, label: "First provider" }] };
+    await startPageTranslation(options);
+    for (const patch of [{ targetLang: "ja" }, { sourceLang: "en" }, { providers: [{ type: "google-web-translate" as const, id: settings.activeProviderId, label: "Updated provider" }] }]) {
+      hidePageTranslation();
+      options = { ...options, ...patch };
+      expect((await startPageTranslation(options)).cached).toBe(0);
+    }
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(4);
+  });
+
+  it("reuses completed paragraphs but retries unfinished requests after stopping", async () => {
+    document.body.innerHTML = `<main><p>${"First paragraph. ".repeat(10)}</p><p>${"Pending paragraph. ".repeat(10)}</p></main>`;
+    let finishOld!: (value: TranslateBatchResponse) => void;
+    const runtime = vi.fn(async (request: RuntimeRequest) => {
+      if (request.type !== "TRANSLATE_BATCH") throw new Error("Unexpected request");
+      return { translations: request.texts.map((text) => `译文：${text}`), cached: 0 };
+    });
+    vi.mocked(sendRuntimeRequest).mockImplementationOnce(runtime)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }));
+    const options = { ...settings, chunkSize: 200, concurrency: 1 };
+    const first = startPageTranslation(options);
+    await vi.waitFor(() => expect(finishOld).toBeTypeOf("function"));
+    hidePageTranslation();
+    await first;
+    vi.mocked(sendRuntimeRequest).mockClear();
+    vi.mocked(sendRuntimeRequest).mockImplementation(runtime);
+    const result = await startPageTranslation(options);
+    expect(result).toMatchObject({ translated: 2, cached: 1 });
+    expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
+    finishOld({ translations: ["Cancelled response"], cached: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.body.textContent).not.toContain("Cancelled response");
+  });
 
   it("requests placeholder validation for rich text before replacing its source", async () => {
     document.body.innerHTML = `<main><p>Read <code>theGuide()</code> carefully.</p></main>`;

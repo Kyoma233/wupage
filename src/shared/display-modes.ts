@@ -18,6 +18,6 @@ export const TRANSLATION_DISPLAY_MODES: ReadonlyArray<{
   {
     value: "bilingual-accent",
     label: "双色对照",
-    description: "译文显示在原文下方，并以相近色区分"
+    description: "译文显示在原文下方，并用不同颜色区分"
   }
 ];

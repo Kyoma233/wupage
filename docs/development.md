@@ -53,11 +53,15 @@ npm run build
 - `npm run test:page`：先运行 `npm run build`，再使用可选的 Playwright 与 Chromium 加载真实 MV3 扩展。支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER` 环境变量。
 - 使用本地页面和本地模拟翻译服务，覆盖两种窗口宽度、三种显示模式、代码占位符损坏恢复、隐藏内容与草稿排除、Ctrl 点击段落翻译、清除还原，以及动态原文更新后的迟到响应。切换显示模式不得新增翻译请求。
 - 同时检查 `dist/content.js` 能作为普通脚本解析，防止公共工具被拆成模块导入而导致内容脚本无法加载。报告保存在 `.npm-cache/page-translation/report.json`。
+- `npm run test:floating`：加载实际扩展，覆盖真实指针的 500 毫秒悬停延迟、离开取消、拖动与位置保存、悬浮球和弹窗的翻译中停止、迟到响应、原译文切换与缓存复用、动态列表、状态同步、缓存清理、失败重试、Debug、设置入口、键盘操作和小窗口。报告保存在 `.npm-cache/floating-interactions/`。
+- `npm run test:settings`：延迟返回设置，逐帧检查弹窗和设置页重开时的图片翻译开关；保存为开启或关闭的状态都不得闪现错误位置或启动动画。报告保存在 `.npm-cache/settings-initialization/`。
+- 网页回归还包含明暗背景、现代 CSS 颜色和网页强制文字颜色下的实际颜色检查，切换原色、双色和替换模式时不得新增翻译请求。
 - 翻译链路的审视结论与兼容处理边界见 [翻译系统审视](translation-review.md)。
 
 ### 图片翻译回归验证
 
 - 本地视觉回归页：运行开发预览服务后打开 `tests/fixtures/image-preview.html`，使用固定模型结果检查覆盖、切换、缩放与内部滚动，不调用外部 API。
+- `npm run test:ocr`：加载真实扩展，下载并校验公开 OCR 模型到独立测试资料目录，验证沙箱初始化、图片识别、覆盖显示、三次原译图切换、重新打开后的缓存、模型删除和设置持久化。翻译使用本地模拟服务，不使用真实 API 密钥。需要网络下载约 20.5 MB 模型及可选的 Playwright 与 Chromium；报告保存在 `.npm-cache/ocr-flow/`。
 - OCR 实测页：先 `npm run build`，再 `node tests/fixtures/ocr-preview-server.mjs`，打开 `http://127.0.0.1:5175`，验证真实下载、安装、识别、状态持久化和删除。仅模拟扩展消息，OCR 模型、沙箱和校验使用生产实现。日文透明文字样例还支持真实翻译，以及使用固定译文的符号覆盖与断句回归。
 - `npm run test:image-resolution`：需要可选的 Playwright 与 Chromium，支持 `PLAYWRIGHT_MODULE` 和 `PDF_TEST_BROWSER` 环境变量。使用只有 viewBox 的 SVG 与固定译文，检查 1、1.25、2 倍屏幕像素密度下的清晰度、放大后重绘与译文复用；未翻译区域逐像素对照直接绘制的 SVG。脚本也接受本地 SVG 路径，报告保存在 `.npm-cache/image-resolution/`。
 

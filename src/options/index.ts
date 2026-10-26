@@ -4,7 +4,7 @@ import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import { sendRuntimeMessage } from "../shared/messaging";
 import type { ExtensionSettings, ProviderConfig } from "../shared/types";
 import "./styles.css";
-import { setupOcrControl } from "../shared/ocr-control";
+import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -58,12 +58,14 @@ const DEFAULT_LLM_PROMPT =
 
 let settings: ExtensionSettings;
 
-void init();
+void init().catch((error: unknown) => {
+  setStatus(error instanceof Error ? error.message : String(error));
+});
 
 async function init(): Promise<void> {
   settings = await sendRuntimeMessage<ExtensionSettings>({ type: "GET_SETTINGS" });
   render();
-  setupOcrControl(imageTranslationEnabled, () => { settings.imageTranslationEnabled = false; imageTranslationEnabled.checked = false; });
+  setupOcrControl(imageTranslationEnabled, () => { settings.imageTranslationEnabled = false; setImageTranslationToggle(imageTranslationEnabled, false); });
   const imageNotice = new URLSearchParams(location.search).get("imageTranslationNotice");
   if (imageNotice === "setup") setStatus("使用右键图片翻译前，请先点击扳手安装 OCR 模型，开启图片翻译并保存。");
   if (imageNotice === "refresh") setStatus("无法连接图片所在页面。请刷新刚才的网页，再右键点击图片翻译；部分嵌入页面暂不支持。");
@@ -108,7 +110,7 @@ function render(): void {
   updatePdfTranslationScope();
   cacheEnabled.checked = settings.cacheEnabled;
   floatingBallEnabled.checked = settings.floatingBallEnabled;
-  imageTranslationEnabled.checked = settings.imageTranslationEnabled === true;
+  setImageTranslationToggle(imageTranslationEnabled, settings.imageTranslationEnabled === true);
   translateCodeComments.checked = settings.translateCodeComments;
   translationDisplayMode.innerHTML = TRANSLATION_DISPLAY_MODES
     .map((mode) => `<option value="${mode.value}">${mode.label}</option>`)

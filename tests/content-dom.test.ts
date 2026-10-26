@@ -305,7 +305,7 @@ describe("content DOM translation extraction", () => {
     expect(source.querySelector(".wupage-replaced-source")).toBeNull();
   });
 
-  it("maps accent colors near the source while maintaining light and dark contrast", () => {
+  it("visibly distinguishes accent colors while maintaining light and dark contrast", () => {
     const lightMapped = mapTranslationTextColor("rgb(32, 38, 42)", "rgb(255, 255, 255)");
     const darkMapped = mapTranslationTextColor("rgb(232, 238, 240)", "rgb(12, 18, 22)");
 
@@ -319,6 +319,34 @@ describe("content DOM translation extraction", () => {
       .not.toBe("rgb(15, 118, 110)");
     expect(mapTranslationTextColor("rgb(94, 234, 212)", "rgb(0, 0, 0)"))
       .not.toBe("rgb(94, 234, 212)");
+  });
+
+  it.each([
+    ["rgb(0, 0, 0)", "rgb(255, 255, 255)"],
+    ["rgb(32, 38, 42)", "rgb(255, 255, 255)"],
+    ["rgb(15, 118, 110)", "rgb(255, 255, 255)"],
+    ["rgb(255, 255, 255)", "rgb(12, 18, 22)"],
+    ["rgb(94, 234, 212)", "rgb(12, 18, 22)"]
+  ])("keeps a visible color difference from %s against %s", (source, background) => {
+    const mapped = mapTranslationTextColor(source, background)!;
+    const channels = (color: string) => color.match(/\d+/g)!.map(Number);
+    const sourceChannels = channels(source);
+    const difference = Math.hypot(...channels(mapped).map((value, index) => value - sourceChannels[index]));
+    expect(difference).toBeGreaterThanOrEqual(48);
+    expect(cssContrast(mapped, background)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("protects translation colors from host color and inherited text-fill rules", () => {
+    document.body.innerHTML = "<main><p>Readable text with a fixed website color.</p></main>";
+    stubLayout("rgb(32, 38, 42)");
+    const [segment] = collectTextSegments();
+    renderTranslations([{ id: segment.id, text: "使用不同颜色显示的译文。" }], "bilingual-accent");
+    const output = document.querySelector<HTMLElement>(".wupage-translation")!;
+    expect(output.style.getPropertyPriority("color")).toBe("important");
+    expect(output.style.getPropertyValue("-webkit-text-fill-color")).toBe("currentcolor");
+    expect(output.style.getPropertyPriority("-webkit-text-fill-color")).toBe("important");
+    setTranslationDisplayMode("bilingual");
+    expect(document.querySelector<HTMLElement>(".wupage-translation")!.style.color).toBe("rgb(32, 38, 42)");
   });
 
   it("translates x.com post paragraphs at blank lines and preserves single line breaks", () => {

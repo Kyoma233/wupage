@@ -194,11 +194,16 @@ describe("popup language controls", () => {
     expect(translate.textContent).toBe("翻译全文");
     expect(document.querySelector("#openPdf")).toBeNull();
     translate.click();
-    await vi.waitFor(() => expect(translate.textContent).toBe("显示全文"));
-    expect(sendToTab).toHaveBeenCalledWith(4, { type: "TRANSLATE_PAGE" });
+    await vi.waitFor(() => {
+      expect(translate.textContent).toBe("显示全文");
+      expect(translate.classList.contains("is-loading")).toBe(false);
+      expect(sendToTab).toHaveBeenCalledWith(4, { type: "TRANSLATE_PAGE" });
+    });
     translate.click();
-    await vi.waitFor(() => expect(translate.textContent).toBe("翻译全文"));
-    expect(sendToTab).toHaveBeenCalledWith(4, { type: "CLEAR_TRANSLATION" });
+    await vi.waitFor(() => {
+      expect(translate.textContent).toBe("翻译全文");
+      expect(sendToTab).toHaveBeenCalledWith(4, { type: "CLEAR_TRANSLATION" });
+    });
     expect(createTab).not.toHaveBeenCalled();
   });
 });

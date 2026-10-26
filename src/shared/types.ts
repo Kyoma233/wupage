@@ -205,6 +205,7 @@ export type RuntimeRequest =
   | ({ type: "TRANSLATE_IMAGE" } & TranslateImageRequest)
   | ({ type: "TRANSLATE_BATCH" } & TranslateBatchRequest)
   | { type: "GET_SETTINGS" }
+  | { type: "OPEN_OPTIONS_PAGE" }
   | { type: "SAVE_SETTINGS"; settings: ExtensionSettings }
   | { type: "TEST_PROVIDER"; providerId?: string };
 

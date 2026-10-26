@@ -133,7 +133,7 @@ describe("floating language controls", () => {
     menu.hidden = false;
 
     expect(getComputedStyle(menu).boxSizing).toBe("border-box");
-    expect(getComputedStyle(menu).width).toBe("240px");
+    expect(getComputedStyle(menu).width).toBe("296px");
     expect(getComputedStyle(languageLabel).float).toBe("none");
     expect(getComputedStyle(languageLabel).width).toBe("auto");
     expect(getComputedStyle(languageLabel).paddingTop).toBe("0px");
@@ -158,7 +158,7 @@ describe("floating language controls", () => {
     expect(["none", "rgba(0, 0, 0, 0)"]).toContain(getComputedStyle(menuButton).textShadow);
   });
 
-  it("shows the translated-page toggle as a visible button", () => {
+  it("shows the translated-page toggle as a visible button", async () => {
     vi.mocked(sendRuntimeRequest).mockResolvedValue(structuredClone(DEFAULT_SETTINGS));
     vi.stubGlobal("chrome", {
       runtime: { id: "test" },
@@ -171,19 +171,20 @@ describe("floating language controls", () => {
 
     injectContentStyles();
     initFloatingBall();
-    query<HTMLButtonElement>("#wupage-floating-ball").click();
+    query<HTMLElement>("#wupage-floating-hitbox").dispatchEvent(new Event("pointerenter"));
+    await vi.waitFor(() => expect(query<HTMLElement>("#wupage-floating-menu").hidden).toBe(false));
 
     const pageToggle = query<HTMLButtonElement>("[data-action='page-toggle']");
     const style = getComputedStyle(pageToggle);
     expect(pageToggle.tagName).toBe("BUTTON");
-    expect(pageToggle.textContent).toBe("显示全文");
+    expect(pageToggle.textContent).toBe("显示原文");
     expect(style.display).toBe("flex");
     expect(style.backgroundColor).toBe("rgb(17, 100, 102)");
     expect(style.borderTopStyle).toBe("solid");
     expect(style.textAlign).toBe("center");
   });
 
-  it("keeps the open menu attached while dragging the floating ball", async () => {
+  it("hides the menu while dragging without triggering the click action", async () => {
     vi.mocked(sendRuntimeRequest).mockResolvedValue(structuredClone(DEFAULT_SETTINGS));
     vi.stubGlobal("chrome", {
       runtime: { id: "test" },
@@ -225,24 +226,24 @@ describe("floating language controls", () => {
     });
 
     await vi.waitFor(() => expect(hitbox.style.left).toBe("484px"));
-    button.click();
-    expect(menu.hidden).toBe(false);
-    expect(menu.style.left).toBe("401px");
-    expect(menu.style.top).toBe("192px");
+    hitbox.dispatchEvent(new Event("pointerenter"));
+    await vi.waitFor(() => expect(menu.hidden).toBe(false));
+    expect(menu.style.left).toBe("550px");
+    expect(menu.style.top).toBe("321px");
 
     button.dispatchEvent(pointerEvent("pointerdown", 521, 421));
     button.dispatchEvent(pointerEvent("pointermove", 621, 321));
 
     expect(hitbox.style.left).toBe("584px");
     expect(hitbox.style.top).toBe("284px");
-    expect(menu.style.left).toBe("501px");
-    expect(menu.style.top).toBe("92px");
+    expect(menu.hidden).toBe(true);
 
     button.dispatchEvent(pointerEvent("pointerup", 621, 321));
     button.click();
-    expect(menu.hidden).toBe(false);
-    button.click();
     expect(menu.hidden).toBe(true);
+    expect(vi.mocked(sendRuntimeRequest).mock.calls.every(([request]) => request.type === "GET_SETTINGS")).toBe(true);
+    hitbox.dispatchEvent(new Event("pointerenter"));
+    await vi.waitFor(() => expect(menu.hidden).toBe(false));
   });
 
   it("restores and synchronizes one floating position across pages", async () => {

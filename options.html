@@ -40,11 +40,11 @@
           <label>全局最大并发数 <input id="concurrency" type="number" min="1" max="8" /></label>
         </div>
         <div class="general-toggles">
-          <div class="image-feature">
+          <div class="image-feature" data-loading aria-busy="true">
           <div class="image-feature-row">
           <label class="setting-toggle">
             <span>图片翻译（点击图片旁按钮，覆盖原文）</span>
-            <input id="imageTranslationEnabled" type="checkbox" role="switch" aria-describedby="ocrDescription ocrModelStatus" />
+            <input id="imageTranslationEnabled" type="checkbox" role="switch" disabled aria-describedby="ocrDescription ocrModelStatus" />
             <span class="setting-toggle-control" aria-hidden="true"></span>
           </label>
           <button id="ocrModelAction" type="button" class="ocr-model-action" aria-label="安装 OCR 模型" disabled></button>

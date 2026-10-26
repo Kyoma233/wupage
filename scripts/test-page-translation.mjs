@@ -121,6 +121,84 @@ try {
   assert.equal(await page.locator(".wupage-translation").count(), 0);
   assert.deepEqual(await page.locator("#rich code").allTextContents(), ["first()", "second()"]);
 
+  // Check rendered colors in Chromium: jsdom does not resolve modern CSS color
+  // spaces or inherited WebKit text fill, and tiny RGB changes look identical.
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await page.locator("main").evaluate(node => {
+    const cases = [
+      ["Black text", "rgb(0, 0, 0)", "rgb(255, 255, 255)"],
+      ["Light text", "rgb(240, 240, 240)", "rgb(18, 24, 28)"],
+      ["Teal text", "rgb(15, 118, 110)", "rgb(255, 255, 255)"],
+      ["Modern light page", "oklch(0.25 0.02 250)", "oklch(1 0 0)"],
+      ["Modern dark page", "oklch(0.95 0.02 250)", "oklch(0.18 0.02 250)"],
+      ["Wide gamut text", "color(display-p3 0.15 0.2 0.3)", "color(srgb 1 1 1)"]
+    ];
+    node.innerHTML = '<style>#color-cases span { color: inherit !important; }</style><section id="color-cases"></section>';
+    const section = node.querySelector("section");
+    cases.forEach(([text, color, background]) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = `${text} should retain a visible translation accent.`;
+      paragraph.dataset.colorCase = text;
+      Object.assign(paragraph.style, { color, backgroundColor: background, padding: "12px" });
+      paragraph.style.setProperty("-webkit-text-fill-color", color);
+      section.append(paragraph);
+    });
+  });
+  const colorResult = await message({ type: "TRANSLATE_PAGE" });
+  assert.equal(colorResult.ok, true, JSON.stringify(colorResult));
+  assert.equal(colorResult.data.failed, 0);
+  assert.equal(await page.locator(".wupage-translation").count(), 6);
+  const colorReports = [];
+  const colorRequests = calls.length;
+  for (const mode of ["bilingual", "bilingual-accent", "replace", "bilingual-accent", "bilingual"]) {
+    await control.evaluate(async mode => {
+      const { data: settings } = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
+      await chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: { ...settings, translationDisplayMode: mode } });
+    }, mode);
+    await page.waitForFunction(mode => [...document.querySelectorAll(".wupage-translation")]
+      .every(node => node.dataset.wupageDisplayMode === mode), mode);
+    const reports = await page.locator("#color-cases p").evaluateAll(paragraphs => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      const rgb = css => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = css;
+        context.fillRect(0, 0, 1, 1);
+        return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+      };
+      const luminance = channels => {
+        const [r, g, b] = channels.map(channel => channel / 255).map(channel => channel <= 0.04045
+          ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      return paragraphs.map(paragraph => {
+        const source = getComputedStyle(paragraph);
+        const output = getComputedStyle(paragraph.querySelector(".wupage-translation"));
+        const originalColor = rgb(source.color);
+        const translatedColor = rgb(output.color);
+        const background = rgb(source.backgroundColor);
+        const lighter = Math.max(luminance(translatedColor), luminance(background));
+        const darker = Math.min(luminance(translatedColor), luminance(background));
+        return { name: paragraph.dataset.colorCase, originalColor, translatedColor,
+          paintedColor: rgb(output.webkitTextFillColor),
+          difference: Math.hypot(...translatedColor.map((channel, index) => channel - originalColor[index])),
+          contrast: (lighter + 0.05) / (darker + 0.05) };
+      });
+    });
+    for (const report of reports) {
+      assert.deepEqual(report.paintedColor, report.translatedColor, `Text fill must follow ${mode}: ${report.name}`);
+      if (mode === "bilingual-accent") {
+        assert.ok(report.difference >= 48, `Accent must be visibly different: ${JSON.stringify(report)}`);
+        assert.ok(report.contrast >= 4.5, `Accent must remain readable: ${JSON.stringify(report)}`);
+      } else assert.deepEqual(report.translatedColor, report.originalColor, `${mode} must preserve source color: ${report.name}`);
+    }
+    assert.equal(calls.length, colorRequests, "Color mode changes must not request new translations");
+    colorReports.push({ mode, cases: reports });
+    await page.screenshot({ path: path.join(output, `colors-${mode}.png`) });
+  }
+  await message({ type: "CLEAR_TRANSLATION" });
+
   // A reused application row must reject the previous source's late response.
   await page.locator("main").evaluate(node => { node.innerHTML = '<p id="pending">Old pending message.</p>'; });
   const pending = message({ type: "TRANSLATE_PAGE" });
@@ -134,10 +212,10 @@ try {
   await message({ type: "CLEAR_TRANSLATION" });
   assert.equal(await page.locator("main").textContent(), "Current message.");
   assert.deepEqual(errors, []);
-  const report = { modes: modeReports, placeholderRecovery: true, paragraphTranslation: true,
+  const report = { modes: modeReports, colors: colorReports, placeholderRecovery: true, paragraphTranslation: true,
     hiddenAndDraftTextExcluded: true, sourceRestored: true, staleResponseDiscarded: true, errors };
   await fs.writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2));
-  console.log("PASS: built MV3 extension; 6 viewport/mode combinations, protected text, drafts, Ctrl-click, source restoration and stale responses");
+  console.log("PASS: built MV3 extension; 6 viewport/mode combinations, 30 rendered color cases, protected text, drafts, Ctrl-click, source restoration and stale responses");
 } finally {
   releaseSlow?.();
   await context?.close();

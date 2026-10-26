@@ -665,6 +665,11 @@ export function renderTargetPlaceholder(element: Element): void {
 }
 
 export function clearTranslations(): void {
+  hideTranslations();
+  clearNodeTracking();
+}
+
+export function hideTranslations(): void {
   restoreTrackedAttributesIn(document.documentElement);
   restoreReplacedSourcesIn(document.documentElement);
   document.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
@@ -674,7 +679,12 @@ export function clearTranslations(): void {
   document.querySelectorAll(`[${TARGET_ATTR}]`).forEach((node) => {
     node.removeAttribute(TARGET_ATTR);
   });
-  clearNodeTracking();
+  renderedById.clear();
+  for (const tracked of trackedAttributes) tracked.translatedValue = undefined;
+}
+
+export function restoreTranslations(displayMode: TranslationDisplayMode): void {
+  renderTranslations([...translatedTextById].map(([id, text]) => ({ id, text })), displayMode);
 }
 
 function clearNodeTracking(): void {
@@ -750,7 +760,7 @@ function renderInterleavedImageText(
   if (!layout) return false;
   const source = tracked.image.currentSrc || tracked.image.src;
   element.dataset.wupageImageLayout = "interleaved";
-  element.style.color = layout.foreground;
+  setTranslationTextColor(element, layout.foreground);
   element.style.setProperty("--wupage-image-font-size", `clamp(14px, ${layout.fontRatio * 100}cqw, 32px)`);
   // The original is now represented by the individual image slices. Keep
   // those alternatives accessible, hiding only the bilingual translation.
@@ -779,7 +789,7 @@ function renderInterleavedImageText(
       const channels = layout.foreground.match(/\d+/g)!.map(Number);
       const background = channels.reduce((sum, value) => sum + value, 0) > 384
         ? "rgb(23, 32, 38)" : "rgb(255, 255, 255)";
-      result.style.color = mapTranslationTextColor(layout.foreground, background) ?? layout.foreground;
+      setTranslationTextColor(result, mapTranslationTextColor(layout.foreground, background) ?? layout.foreground);
     }
     row.append(result);
     element.append(row);
@@ -918,11 +928,18 @@ function applyTranslationTextColor(
   const color = window.getComputedStyle(source).color;
   if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") return;
   if (displayMode !== "bilingual-accent") {
-    translation.style.color = color;
+    setTranslationTextColor(translation, color);
     return;
   }
   const mapped = mapTranslationTextColor(color, getEffectiveBackgroundColor(source));
-  translation.style.color = mapped ?? color;
+  setTranslationTextColor(translation, mapped ?? color);
+}
+
+function setTranslationTextColor(translation: HTMLElement, color: string): void {
+  // Host pages can force span colors or inherit a fixed WebKit text fill.
+  // Keep the selected mode's color visible in both cases.
+  translation.style.setProperty("color", color, "important");
+  translation.style.setProperty("-webkit-text-fill-color", "currentColor", "important");
 }
 
 interface RgbaColor {
@@ -942,32 +959,23 @@ export function mapTranslationTextColor(
 
   const opaqueBackground = compositeColor(background, { r: 255, g: 255, b: 255, a: 1 });
   const opaqueSource = compositeColor(source, opaqueBackground);
-  const darkBackground = relativeLuminance(opaqueBackground) < 0.42;
+  const black = { r: 0, g: 0, b: 0, a: 1 };
+  const white = { r: 255, g: 255, b: 255, a: 1 };
+  const darkBackground = contrastRatio(white, opaqueBackground) > contrastRatio(black, opaqueBackground);
+  const contrastColor = darkBackground ? white : black;
+  const ensureContrast = (color: RgbaColor): RgbaColor => contrastRatio(color, opaqueBackground) >= 4.6
+    ? color : mixUntilContrast(color, contrastColor, opaqueBackground, 4.6);
   const accent = darkBackground
     ? { r: 94, g: 234, b: 212, a: 1 }
     : { r: 15, g: 118, b: 110, a: 1 };
-  let mapped = mixColors(opaqueSource, accent, 0.22);
+  let mapped = ensureContrast(mixColors(opaqueSource, accent, 0.65));
 
-  if (contrastRatio(mapped, opaqueBackground) < 4.5) {
-    const black = { r: 0, g: 0, b: 0, a: 1 };
-    const white = { r: 255, g: 255, b: 255, a: 1 };
-    const contrastColor = contrastRatio(black, opaqueBackground) >= contrastRatio(white, opaqueBackground)
-      ? black
-      : white;
-    mapped = mixUntilContrast(mapped, contrastColor, opaqueBackground, 4.5);
-  }
-
-  if (colorDistance(mapped, opaqueSource) < 6) {
-    const nudge = darkBackground
-      ? { r: 129, g: 230, b: 217, a: 1 }
-      : { r: 8, g: 95, b: 88, a: 1 };
-    mapped = mixColors(mapped, nudge, 0.16);
-    if (contrastRatio(mapped, opaqueBackground) < 4.5) {
-      const contrastColor = darkBackground
-        ? { r: 255, g: 255, b: 255, a: 1 }
-        : { r: 0, g: 0, b: 0, a: 1 };
-      mapped = mixUntilContrast(mapped, contrastColor, opaqueBackground, 4.5);
-    }
+  if (colorDistance(mapped, opaqueSource) < 48) {
+    // Teal source text needs a different accent, not another near-identical teal.
+    const alternate = darkBackground
+      ? { r: 147, g: 197, b: 253, a: 1 }
+      : { r: 37, g: 99, b: 235, a: 1 };
+    mapped = ensureContrast(mixColors(opaqueSource, alternate, 0.8));
   }
   return `rgb(${Math.round(mapped.r)}, ${Math.round(mapped.g)}, ${Math.round(mapped.b)})`;
 }
@@ -985,10 +993,13 @@ function getEffectiveBackgroundColor(source: Element): string {
   return `rgb(${Math.round(result.r)}, ${Math.round(result.g)}, ${Math.round(result.b)})`;
 }
 
+let cssColorContext: CanvasRenderingContext2D | null | undefined;
+const resolvedCssColors = new Map<string, RgbaColor>();
+
 function parseCssColor(value: string): RgbaColor | null {
   if (!value) return null;
   const match = value.trim().match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i);
-  if (!match) return null;
+  if (!match) return resolveCssColor(value);
   const alphaValue = match[4] === undefined ? 1 : Number.parseFloat(match[4]);
   const alpha = match[4]?.includes("%") ? alphaValue / 100 : alphaValue;
   return {
@@ -997,6 +1008,33 @@ function parseCssColor(value: string): RgbaColor | null {
     b: clampColorChannel(Number(match[3])),
     a: Math.max(0, Math.min(1, alpha))
   };
+}
+
+function resolveCssColor(value: string): RgbaColor | null {
+  const cached = resolvedCssColors.get(value);
+  if (cached) return cached;
+  if (typeof CSS === "undefined" || !CSS.supports("color", value)
+    || typeof CanvasRenderingContext2D === "undefined") return null;
+  try {
+    if (cssColorContext === undefined) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      cssColorContext = canvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (!cssColorContext) return null;
+    // Computed styles preserve oklch(), lab() and color(display-p3 ...).
+    // Let the browser convert them into sRGB instead of falling back to the source.
+    cssColorContext.clearRect(0, 0, 1, 1);
+    cssColorContext.fillStyle = value;
+    cssColorContext.fillRect(0, 0, 1, 1);
+    const [r, g, b, alpha] = cssColorContext.getImageData(0, 0, 1, 1).data;
+    const color = { r, g, b, a: alpha / 255 };
+    if (resolvedCssColors.size >= 256) resolvedCssColors.clear();
+    resolvedCssColors.set(value, color);
+    return color;
+  } catch {
+    return null;
+  }
 }
 
 function compositeColor(foreground: RgbaColor, background: RgbaColor): RgbaColor {

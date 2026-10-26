@@ -5,6 +5,18 @@ import "./ocr-control.css";
 const wrench = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6a5 5 0 0 0-6 6L3 17a2.8 2.8 0 0 0 4 4l5-5a5 5 0 0 0 6-6l-3 3-4-4 3-3Z"/></svg>';
 const trash = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
 
+export function setImageTranslationToggle(toggle: HTMLButtonElement | HTMLInputElement, enabled: boolean): void {
+  if (toggle instanceof HTMLInputElement) toggle.checked = enabled;
+  else toggle.setAttribute("aria-pressed", String(enabled));
+
+  const feature = toggle.closest<HTMLElement>(".image-feature");
+  if (!feature?.hasAttribute("data-loading")) return;
+  // Commit the saved position while transitions are disabled, then reveal it.
+  void feature.offsetWidth;
+  feature.removeAttribute("data-loading");
+  feature.removeAttribute("aria-busy");
+}
+
 function setupHelp(action: HTMLButtonElement, contents: HTMLElement[]): () => void {
   const help = document.createElement("div"); help.className = "ocr-help";
   const trigger = document.createElement("button");
@@ -60,10 +72,7 @@ export function setupOcrControl(toggle: HTMLButtonElement | HTMLInputElement, on
     const installing = value.state === "installing";
     if (wasInstalled && !installed) onRemoved();
     toggle.disabled = !installed;
-    if (!installed) {
-      if (toggle instanceof HTMLInputElement) toggle.checked = false;
-      else toggle.setAttribute("aria-pressed", "false");
-    }
+    if (!installed) setImageTranslationToggle(toggle, false);
     button.disabled = acting || installing;
     button.dataset.state = value.state;
     button.innerHTML = installed ? trash : wrench;

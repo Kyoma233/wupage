@@ -4,9 +4,11 @@ import {
   clearTranslations,
   collectAdditionalTextSegments,
   collectTextSegments,
+  hideTranslations,
   invalidateStaleSegments,
   renderTranslationPlaceholders,
   renderTranslations,
+  restoreTranslations,
   setTranslationDisplayMode
 } from "./dom";
 import type { TextSegment } from "./dom";
@@ -38,6 +40,8 @@ interface SegmentEntry {
 
 interface TranslationSession {
   id: number;
+  pageUrl: string;
+  translationIdentity: string;
   settings: ExtensionSettings;
   entries: Map<string, SegmentEntry>;
   queue: TextSegment[][];
@@ -65,15 +69,61 @@ export interface PageTranslationResult {
   remaining: number;
 }
 
+export interface PageTranslationState extends PageTranslationResult {
+  active: boolean;
+  pending: number;
+}
+
 let sessionCounter = 0;
 let activeSession: TranslationSession | null = null;
+let suspendedSession: TranslationSession | null = null;
 let viewportTimer: number | undefined;
 let currentDisplayMode: TranslationDisplayMode | undefined;
+const stateListeners = new Set<() => void>();
 
-export function startPageTranslation(settings: ExtensionSettings): Promise<PageTranslationResult> {
-  clearPageTranslation();
+export function getPageTranslationState(): PageTranslationState {
+  const session = activeSession;
+  return session
+    ? {
+      ...getResult(session),
+      active: true,
+      pending: [...session.entries.values()].filter((entry) => entry.status === "queued" || entry.status === "running").length
+    }
+    : { active: false, pending: 0, translated: 0, cached: 0, failed: 0, remaining: 0 };
+}
+
+export function subscribePageTranslationState(listener: () => void): () => void {
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
+}
+
+function notifyTranslationState(): void {
+  stateListeners.forEach((listener) => listener());
+}
+
+export function startPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
+  const saved = suspendedSession;
+  const canRestore = reuseResults && saved && saved.pageUrl === location.href
+    && saved.translationIdentity === getTranslationIdentity(settings);
+  let entries: Map<string, SegmentEntry>;
+  if (canRestore) {
+    handleDynamicContent(saved, saved.observer.takeRecords());
+    saved.observer.disconnect();
+    suspendedSession = null;
+    const stale = new Set(invalidateStaleSegments([...saved.changedRoots]));
+    entries = new Map([...saved.entries].filter(([id, entry]) => !stale.has(id) && entry.segment.element.isConnected)
+      .map(([id, entry]) => [id, { segment: entry.segment, status: entry.status === "done" ? "done" : "idle" }]));
+    for (const segment of collectAdditionalTextSegments(document.body, settings.translateCodeComments)) {
+      entries.set(segment.id, { segment, status: "idle" });
+    }
+    preserveViewportPosition(() => restoreTranslations(settings.translationDisplayMode),
+      [...entries.values()].map((entry) => entry.segment));
+  } else {
+    clearPageTranslation();
+    entries = new Map(collectTextSegments(settings.translateCodeComments).map((segment) => [segment.id, { segment, status: "idle" }]));
+  }
   currentDisplayMode = settings.translationDisplayMode;
-  const segments = collectTextSegments(settings.translateCodeComments);
+  const restored = [...entries.values()].filter((entry) => entry.status === "done").length;
 
   let resolveInitial!: (result: PageTranslationResult) => void;
   const initialPromise = new Promise<PageTranslationResult>((resolve) => {
@@ -83,14 +133,16 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
   const observer = new MutationObserver((mutations) => handleDynamicContent(session, mutations));
   const session: TranslationSession = {
     id: ++sessionCounter,
+    pageUrl: location.href,
+    translationIdentity: getTranslationIdentity(settings),
     settings,
-    entries: new Map(segments.map((segment) => [segment.id, { segment, status: "idle" }])),
+    entries,
     queue: [],
     activeCount: 0,
     maxConcurrency: Math.min(MAX_PAGE_CONCURRENCY, performance.concurrency),
     cancelled: false,
-    translated: 0,
-    cached: 0,
+    translated: restored,
+    cached: restored,
     failed: 0,
     initialPending: new Set(),
     initialResolved: false,
@@ -101,13 +153,7 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
   };
 
   activeSession = session;
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-    attributes: true,
-    attributeFilter: ["class", "style", "hidden", "aria-hidden", "placeholder", "alt", "open"]
-  });
+  observePage(session);
   window.addEventListener("scroll", handleViewportChange, { passive: true, capture: true });
   window.addEventListener("resize", handleViewportChange, { passive: true });
   document.addEventListener("load", handleImageLoad, true);
@@ -118,7 +164,47 @@ export function startPageTranslation(settings: ExtensionSettings): Promise<PageT
 
 export function clearPageTranslation(): void {
   cancelActiveSession();
+  suspendedSession?.observer.disconnect();
+  suspendedSession = null;
   clearTranslations();
+  notifyTranslationState();
+}
+
+export function hidePageTranslation(): void {
+  const session = activeSession;
+  if (!session && suspendedSession) {
+    // Paragraph translation can add visible results while the page session is
+    // suspended. Hide those too, keeping the saved page results and observer.
+    preserveViewportPosition(hideTranslations, [...suspendedSession.entries.values()].map((entry) => entry.segment));
+    notifyTranslationState();
+    return;
+  }
+  cancelActiveSession();
+  suspendedSession?.observer.disconnect();
+  suspendedSession = session;
+  preserveViewportPosition(hideTranslations, session ? [...session.entries.values()].map((entry) => entry.segment) : []);
+  if (session) observePage(session);
+  notifyTranslationState();
+}
+
+function getTranslationIdentity(settings: ExtensionSettings): string {
+  return JSON.stringify({
+    sourceLang: settings.sourceLang,
+    targetLang: settings.targetLang,
+    activeProviderId: settings.activeProviderId,
+    provider: settings.providers.find((provider) => provider.id === settings.activeProviderId),
+    translateCodeComments: settings.translateCodeComments
+  });
+}
+
+function observePage(session: TranslationSession): void {
+  session.observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["class", "style", "hidden", "aria-hidden", "placeholder", "alt", "open"]
+  });
 }
 
 export function getPageTranslationDisplayMode(fallback: TranslationDisplayMode): TranslationDisplayMode {
@@ -128,6 +214,7 @@ export function getPageTranslationDisplayMode(fallback: TranslationDisplayMode):
 export function setPageTranslationDisplayMode(mode: TranslationDisplayMode): void {
   currentDisplayMode = mode;
   const session = activeSession;
+  if (!session && suspendedSession) return;
   if (session) session.settings = { ...session.settings, translationDisplayMode: mode };
   preserveViewportPosition(() => setTranslationDisplayMode(mode),
     session ? [...session.entries.values()].map((entry) => entry.segment) : []);
@@ -164,6 +251,7 @@ function scheduleNearbySegments(session: TranslationSession, initial = false): v
     getProgressiveMaxItems(session.settings)
   );
   pumpQueue(session);
+  notifyTranslationState();
 }
 
 function pumpQueue(session: TranslationSession): void {
@@ -255,17 +343,21 @@ function handleViewportChange(): void {
 }
 
 function handleDynamicContent(session: TranslationSession, mutations: MutationRecord[]): void {
-  if (!isActive(session)) return;
+  if (!isActive(session) && suspendedSession !== session) return;
   for (const mutation of mutations) {
     const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
     if (!target || isExtensionOwned(target)) continue;
     if (mutation.type === "characterData") {
       session.dynamicRoots.add(target);
+      if (suspendedSession === session) session.changedRoots.add(target);
       continue;
     }
     if (mutation.type === "attributes") {
       const root = mutation.target instanceof Element ? mutation.target : null;
-      if (root && !isExtensionOwned(root)) session.dynamicRoots.add(root);
+      if (root && !isExtensionOwned(root)) {
+        session.dynamicRoots.add(root);
+        if (suspendedSession === session) session.changedRoots.add(root);
+      }
       continue;
     }
     const sourceChanged = [...mutation.addedNodes, ...mutation.removedNodes].some((node) =>
@@ -283,7 +375,7 @@ function handleDynamicContent(session: TranslationSession, mutations: MutationRe
       session.dynamicRoots.add(root);
     }
   }
-  if (!session.dynamicRoots.size || session.dynamicTimer !== undefined) return;
+  if (suspendedSession === session || !session.dynamicRoots.size || session.dynamicTimer !== undefined) return;
   session.dynamicTimer = window.setTimeout(() => {
     session.dynamicTimer = undefined;
     collectDynamicSegments(session);

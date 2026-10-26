@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { setMode } = vi.hoisted(() => ({ setMode: vi.fn() }));
-vi.mock("../src/content/page-translation", () => ({
-  clearPageTranslation: vi.fn(), startPageTranslation: vi.fn(), setPageTranslationDisplayMode: setMode
+const { setMode, getPageState, hasTranslations } = vi.hoisted(() => ({
+  setMode: vi.fn(), getPageState: vi.fn(), hasTranslations: vi.fn()
 }));
+vi.mock("../src/content/page-translation", () => ({
+  hidePageTranslation: vi.fn(), startPageTranslation: vi.fn(), setPageTranslationDisplayMode: setMode,
+  getPageTranslationState: getPageState
+}));
+vi.mock("../src/content/dom", () => ({ hasPageTranslations: hasTranslations }));
 vi.mock("../src/content/floating", () => ({
   initFloatingBall: vi.fn(), getFloatingBallEnabled: vi.fn(), getParagraphMode: vi.fn(),
   openDebugPanel: vi.fn(), setFloatingBallEnabled: vi.fn(), setParagraphMode: vi.fn()
@@ -33,5 +37,22 @@ describe("saved display mode updates", () => {
     listener({ "wupage.settings": { newValue: undefined } }, "local");
     expect(setMode).toHaveBeenCalledTimes(3);
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { active: true, rendered: false, translated: true },
+    { active: true, rendered: true, translated: true },
+    { active: false, rendered: true, translated: true },
+    { active: false, rendered: false, translated: false }
+  ])("reports page mode consistently for active=$active and rendered=$rendered", async ({ active, rendered, translated }) => {
+    vi.stubGlobal("chrome", { storage: { onChanged: { addListener: vi.fn() } } });
+    getPageState.mockReturnValue({ active });
+    hasTranslations.mockReturnValue(rendered);
+    const { addRuntimeMessageListener } = await import("../src/content/runtime");
+    await import("../src/content/index");
+    const listener = vi.mocked(addRuntimeMessageListener).mock.calls[0][0];
+    const response = vi.fn();
+    listener({ type: "GET_TRANSLATION_STATE" }, {} as chrome.runtime.MessageSender, response);
+    await vi.waitFor(() => expect(response).toHaveBeenCalledWith({ ok: true, data: { translated } }));
   });
 });

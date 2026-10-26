@@ -215,6 +215,10 @@ export function injectContentStyles(): void {
       display: none !important;
     }
 
+    #wupage-floating-hitbox:has(.is-menu-open) {
+      pointer-events: none !important;
+    }
+
     #wupage-floating-ball {
       all: initial;
       position: relative;
@@ -234,6 +238,7 @@ export function injectContentStyles(): void {
       box-shadow: 0 8px 24px rgba(15, 35, 38, 0.22);
       appearance: none;
       cursor: pointer;
+      pointer-events: auto;
       overflow: visible;
       text-align: center;
       text-decoration: none;
@@ -268,9 +273,13 @@ export function injectContentStyles(): void {
       background: #0f5557;
     }
 
+    #wupage-floating-ball:focus-visible {
+      outline: 3px solid #69b8ac;
+      outline-offset: 3px;
+    }
+
     #wupage-floating-ball.is-loading {
-      opacity: 0.68;
-      cursor: wait;
+      box-shadow: 0 0 0 3px rgba(17, 100, 102, 0.2), 0 8px 24px rgba(15, 35, 38, 0.22);
     }
 
     #wupage-floating-ball.is-dragging {
@@ -300,15 +309,18 @@ export function injectContentStyles(): void {
 
     #wupage-floating-menu {
       all: initial;
-      position: fixed;
+      position: fixed !important;
       z-index: 2147483647;
       display: block;
       box-sizing: border-box;
-      width: 240px;
+      width: 296px;
       max-width: calc(100vw - 16px);
-      padding: 6px;
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 10px;
       border: 1px solid rgba(31, 42, 46, 0.12);
-      border-radius: 8px;
+      border-radius: 14px;
       background: #ffffff;
       box-shadow: 0 12px 30px rgba(15, 35, 38, 0.2);
       font: 13px/1.3 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -325,8 +337,9 @@ export function injectContentStyles(): void {
       box-sizing: border-box;
     }
 
-    #wupage-floating-menu[hidden] {
-      display: none;
+    #wupage-floating-menu[hidden],
+    #wupage-floating-menu [hidden] {
+      display: none !important;
     }
 
     #wupage-floating-menu button {
@@ -352,6 +365,16 @@ export function injectContentStyles(): void {
       background: #e8f1ef;
     }
 
+    #wupage-floating-menu button:focus-visible {
+      outline: 2px solid #69b8ac;
+      outline-offset: 2px;
+    }
+
+    #wupage-floating-menu button:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
     #wupage-floating-menu button[aria-pressed="true"] {
       color: #0f5557;
       background: #d9efea;
@@ -363,7 +386,7 @@ export function injectContentStyles(): void {
       align-items: center;
       justify-content: center;
       width: calc(100% - 8px);
-      min-height: 36px;
+      min-height: 40px;
       margin: 4px;
       border: 1px solid #116466;
       color: #ffffff;
@@ -384,6 +407,142 @@ export function injectContentStyles(): void {
 
     #wupage-floating-menu .wupage-menu-section {
       padding: 4px;
+    }
+
+    #wupage-floating-menu .wupage-menu-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 4px 8px;
+    }
+
+    #wupage-floating-menu .wupage-menu-header strong {
+      font: 700 15px/1.4 system-ui, sans-serif;
+      color: #116466;
+    }
+
+    #wupage-floating-menu .wupage-menu-header button,
+    #wupage-floating-menu .wupage-menu-footer button,
+    #wupage-floating-menu button[data-action="retranslate"] {
+      width: auto;
+      flex: 0 0 auto;
+      min-height: 28px;
+      padding: 0 6px;
+      color: #116466;
+      font-size: 12px;
+    }
+
+    #wupage-floating-menu .wupage-field-label {
+      display: block;
+      margin: 0 0 6px;
+      color: #647379;
+      font: 12px/1.4 system-ui, sans-serif;
+      text-align: left;
+    }
+
+    #wupage-floating-menu .wupage-menu-field {
+      all: initial;
+      display: block;
+      margin: 4px;
+      padding: 4px 0;
+      font: inherit;
+    }
+
+    #wupage-floating-menu .wupage-provider-select {
+      all: initial;
+      position: relative !important;
+      inset: auto !important;
+      display: block;
+      width: 100%;
+      height: 36px;
+      margin: 0 !important;
+      padding: 0 !important;
+      font: inherit;
+    }
+
+    #wupage-floating-menu select[data-role="provider"] {
+      all: initial;
+      display: block;
+      box-sizing: border-box;
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: none !important;
+      height: 36px !important;
+      margin: 0 !important;
+      padding: 0 28px !important;
+      border: 1px solid #d5dfdc;
+      border-radius: 8px;
+      color: transparent !important;
+      background: #f5f8f7;
+      font: inherit;
+      appearance: none !important;
+      box-shadow: none !important;
+      transform: none !important;
+      cursor: pointer;
+    }
+
+    #wupage-floating-menu select[data-role="provider"] option {
+      color: #26343a;
+      background: #ffffff;
+    }
+
+    #wupage-floating-menu select[data-role="provider"]:focus-visible {
+      outline: 2px solid #69b8ac;
+      outline-offset: 2px;
+    }
+
+    #wupage-floating-menu .wupage-display-modes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 3px;
+      padding: 3px;
+      border-radius: 8px;
+      background: #eef2f1;
+    }
+
+    #wupage-floating-menu .wupage-display-modes button {
+      min-width: 0;
+      padding: 0 3px;
+      text-align: center;
+      font-size: 12px;
+    }
+
+    #wupage-floating-menu .wupage-display-modes button[aria-pressed="true"] {
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(15, 35, 38, 0.1);
+    }
+
+    #wupage-floating-menu .wupage-translation-feedback {
+      padding: 4px 8px 6px;
+    }
+
+    #wupage-floating-menu [data-role="translation-status"],
+    #wupage-floating-menu .wupage-menu-hint {
+      margin: 0;
+      color: #647379;
+      font: 12px/1.6 system-ui, sans-serif;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    #wupage-floating-menu [data-role="translation-status"][data-tone="error"] {
+      color: #b13e36;
+    }
+
+    #wupage-floating-menu .wupage-menu-hint {
+      padding: 2px 10px 4px;
+    }
+
+    #wupage-floating-menu .wupage-menu-footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      padding: 0 4px;
+      color: #647379;
+      font-size: 11px;
     }
 
     #wupage-floating-menu .wupage-language-pair {
@@ -456,7 +615,8 @@ export function injectContentStyles(): void {
       font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
-    #wupage-floating-menu .wupage-language-value {
+    #wupage-floating-menu .wupage-language-value,
+    #wupage-floating-menu .wupage-provider-value {
       all: initial;
       position: absolute !important;
       z-index: 1;
@@ -478,6 +638,10 @@ export function injectContentStyles(): void {
       white-space: nowrap !important;
       pointer-events: none;
       transform: none !important;
+    }
+
+    #wupage-floating-menu .wupage-provider-value {
+      padding: 0 28px !important;
     }
 
     #wupage-floating-menu .wupage-language-select select:hover,
@@ -513,10 +677,21 @@ export function injectContentStyles(): void {
       align-self: center !important;
       margin: 0 !important;
       padding: 0 !important;
-      color: #7a878b;
+      color: #116466;
       font: 17px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       text-align: center !important;
       transform: none !important;
+    }
+
+    #wupage-floating-menu .wupage-language-direction svg {
+      all: initial;
+      display: block !important;
+      width: 24px !important;
+      height: 24px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      color: inherit;
+      overflow: visible;
     }
 
     #wupage-floating-menu .wupage-visually-hidden {

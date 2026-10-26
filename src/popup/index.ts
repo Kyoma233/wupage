@@ -3,7 +3,7 @@ import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from "../shared/languages";
 import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import type { ExtensionSettings } from "../shared/types";
 import "./styles.css";
-import { setupOcrControl } from "../shared/ocr-control";
+import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
 import { isLikelyPdfUrl } from "../pdf/launch";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
@@ -27,6 +27,7 @@ let settings: ExtensionSettings;
 let paragraphMode = false;
 let paragraphModeAvailable = true;
 let pageTranslated = false;
+let pageActionVersion = 0;
 let floatingBallEnabled = true;
 let activeTabIsPdf = false;
 let pageTranslationAvailable = true;
@@ -52,8 +53,8 @@ async function init(): Promise<void> {
   translationDisplayMode.value = settings.translationDisplayMode;
   floatingBallEnabled = settings.floatingBallEnabled;
   updateFloatingBallButton();
-  imageTranslationButton.setAttribute("aria-pressed", String(settings.imageTranslationEnabled === true));
-  setupOcrControl(imageTranslationButton, () => { settings.imageTranslationEnabled = false; imageTranslationButton.setAttribute("aria-pressed", "false"); });
+  setImageTranslationToggle(imageTranslationButton, settings.imageTranslationEnabled === true);
+  setupOcrControl(imageTranslationButton, () => { settings.imageTranslationEnabled = false; setImageTranslationToggle(imageTranslationButton, false); });
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabIsPdf = isLikelyPdfUrl(activeTab?.url);
   pageTranslationAvailable = activeTabIsPdf || isSupportedPageUrl(activeTab?.url);
@@ -88,7 +89,7 @@ async function init(): Promise<void> {
     try {
       settings.imageTranslationEnabled = !previous;
       await savePopupSettings();
-      imageTranslationButton.setAttribute("aria-pressed", String(!previous));
+      setImageTranslationToggle(imageTranslationButton, !previous);
       setStatus(!previous ? "图片翻译已开启，点击图片旁的“译”按钮即可覆盖翻译。" : "图片翻译已关闭，已恢复原图。");
     } catch (error) {
       settings.imageTranslationEnabled = previous;
@@ -149,12 +150,20 @@ async function togglePageTranslation(): Promise<void> {
     }
     return;
   }
-  const request = { type: pageTranslated ? "CLEAR_TRANSLATION" : "TRANSLATE_PAGE" } as const;
-  setPageToggleBusy(true);
+  const previous = pageTranslated;
+  const version = ++pageActionVersion;
+  const request = { type: previous ? "CLEAR_TRANSLATION" : "TRANSLATE_PAGE" } as const;
+  pageTranslated = !previous;
+  updatePageToggleButton();
+  setPageToggleBusy(request.type === "TRANSLATE_PAGE", true);
   setStatus(request.type === "TRANSLATE_PAGE" ? "正在翻译..." : "正在显示原文...");
   try {
-    await savePopupSettings();
+    // Stop immediately even when the original settings save or page request is
+    // still pending. Its late completion must not restart or repaint the action.
+    if (request.type === "TRANSLATE_PAGE") await savePopupSettings();
+    if (version !== pageActionVersion) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (version !== pageActionVersion) return;
     if (!tab.id) throw new Error("没有活动标签页。");
     const result = await sendTabMessage<{
       translated?: number;
@@ -167,13 +176,10 @@ async function togglePageTranslation(): Promise<void> {
       tab.id,
       request
     );
+    if (version !== pageActionVersion) return;
     if (request.type === "CLEAR_TRANSLATION") {
-      pageTranslated = false;
-      updatePageToggleButton();
       setStatus(result.cleared ? "已显示原文。" : "没有可清除的译文。");
     } else {
-      pageTranslated = (result.translated ?? 0) > 0;
-      updatePageToggleButton();
       const failed = result.failed ?? 0;
       setStatus(
         failed > 0
@@ -184,9 +190,12 @@ async function togglePageTranslation(): Promise<void> {
       );
     }
   } catch (error) {
+    if (version !== pageActionVersion) return;
+    pageTranslated = previous;
+    updatePageToggleButton();
     setStatus(error instanceof Error ? error.message : String(error));
   } finally {
-    setPageToggleBusy(false);
+    if (version === pageActionVersion) setPageToggleBusy(false);
   }
 }
 
@@ -221,9 +230,10 @@ function isSupportedPageUrl(value: string | undefined): boolean {
   }
 }
 
-function setPageToggleBusy(value: boolean): void {
-  pageToggleButton.disabled = value || !pageTranslationAvailable;
+function setPageToggleBusy(value: boolean, cancellable = false): void {
+  pageToggleButton.disabled = (value && !cancellable) || !pageTranslationAvailable;
   pageToggleButton.classList.toggle("is-loading", value);
+  pageToggleButton.setAttribute("aria-busy", String(value));
 }
 
 function setStatus(value: string): void {

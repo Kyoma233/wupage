@@ -9,7 +9,7 @@ import {
   setParagraphMode
 } from "./floating";
 import { addRuntimeMessageListener, sendRuntimeRequest } from "./runtime";
-import { clearPageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
+import { getPageTranslationState, hidePageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
 import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
 import { SETTINGS_KEY } from "../shared/defaults";
@@ -46,12 +46,12 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
     return translateContextImage(request.srcUrl);
   }
   if (request.type === "CLEAR_TRANSLATION") {
-    clearPageTranslation();
+    hidePageTranslation();
     return { cleared: true };
   }
 
   if (request.type === "GET_TRANSLATION_STATE") {
-    return { translated: hasPageTranslations() };
+    return { translated: getPageTranslationState().active || hasPageTranslations() };
   }
 
   if (request.type === "GET_PARAGRAPH_MODE") {

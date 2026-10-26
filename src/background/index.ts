@@ -26,6 +26,9 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
 
 async function handleMessage(request: RuntimeRequest): Promise<unknown> {
   switch (request.type) {
+    case "OPEN_OPTIONS_PAGE":
+      await chrome.runtime.openOptionsPage();
+      return null;
     case "GET_SETTINGS": {
       const settings = await getSettings();
       if (settings.imageTranslationEnabled && !await installedRevision()) {
