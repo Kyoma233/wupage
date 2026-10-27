@@ -65,7 +65,19 @@ Chrome 与 Edge 使用同一发布包。手动更新时，将新版文件解压�
 3. 点击「翻译全文」，在当前页面查看译文。
 4. 点击「显示全文」，恢复原文。
 
-初始配置为自动检测源语言、翻译为简体中文，使用无需 API Key 的 Google Web Translate。页面默认同时显示原文与译文；滚动或异步加载的新内容会继续识别并翻译。
+初始配置为自动检测源语言、翻译为简体中文，使用 Microsoft 翻译的免费服务，也可切换其他预置服务商。页面默认同时显示原文与译文；滚动或异步加载的新内容会继续识别并翻译。升级扩展后保留已选择的翻译服务。
+
+### 自动翻译
+
+在扩展弹窗或悬浮菜单中点击「自动翻译」开关即可启停，立即生效。首次开启且尚未配置规则时，默认自动翻译非目标语言页面；已有站点和语言规则会保留。自动翻译默认关闭，沿用当前的翻译语言、服务和显示模式；使用在线服务时会消耗对应额度。
+
+要限定自动翻译范围，在「设置 → 自动翻译」配置规则并点击页面底部的「保存」：
+
+- **站点列表**：预先列出 GitHub、Stack Overflow、英文维基百科、Reddit、Medium 和 Hacker News。勾选启用，地址可直接编辑；点击底部「＋」新增一行，点击行末「－」删除，预置站点同样可以删除。保存后生效，删除的预置项不会在重开设置时恢复。
+- **站点匹配**：`example.com` 包含子域名，`*.example.com` 仅匹配子域名，`https://example.com/docs/*` 限定 HTTPS 和路径。
+- **非目标语言页面**：启用自动翻译后，总开关右侧显示「页面语言不是目标语言时自动翻译」勾选项。首次启用且未配置规则时默认勾选，可取消以仅按站点列表翻译。浏览器在本机识别页面正文语言；与目标语言相同或无法可靠识别时跳过。
+
+满足任意一项规则即可触发。网页在前台显示并加载正文后开始翻译，随后加载的新内容沿用现有的增量翻译。手动点击「显示全文」恢复原文后，当前地址不会再次自动开启；刷新或进入新地址后重新匹配规则。自动翻译只针对普通网页，不会自动打开 PDF 工作区或下载本地翻译模型。
 
 ### 显示模式
 
@@ -159,7 +171,7 @@ Chrome 与 Edge 使用同一发布包。手动更新时，将新版文件解压�
 
 点击「翻译附近页面」后，默认翻译当前页及前后各 5 页，最多 11 页。范围内完成后等待继续阅读；滚动到新位置会自动补译附近未完成的页面。快速跳页时，尚未开始的旧范围任务会被移出队列；已完成的同语言、同服务译文及手动编辑会保留。
 
-在扩展设置的「PDF 翻译」中调整前后页数：0 表示只翻译当前页，选择「无限制（整份 PDF）」可翻译全文。保存后，下一次点击翻译时生效。
+在扩展设置的「性能设置 → PDF 翻译范围」中调整前后页数：0 表示只翻译当前页，选择「无限制（整份 PDF）」可翻译全文。保存后，下一次点击翻译时生效。
 
 ### 校对与导出
 
@@ -190,20 +202,32 @@ Chrome 与 Edge 使用同一发布包。手动更新时，将新版文件解压�
 
 ## 翻译服务
 
-点击扩展弹窗中的「设置」，配置翻译服务；完成后返回弹窗，在「翻译服务」中选择对应项目。
+Microsoft、Google、腾讯、Yandex、火山和 MyMemory 已预置，默认使用无需密钥的免费服务。在「设置 → 翻译服务」选择服务商后，将「使用方式」切换为「API 服务（自备凭据）」即可填写自己的账号凭据，保存后生效。API 的免费额度与付费规则由服务商决定。
+
+选择服务商或切换使用方式后，「额度与限制」会显示对应服务的免费或匿名额度、单次请求限制、请求速率、并发和官方来源，并标注更新日期。未公布的项目显示「官方未公布」。插件分块大小与调度并发单独显示；账号剩余额度请在服务商控制台查看。切换模型或服务地址后，说明会同步更新。
+
+| 服务商 | 默认免费服务 | 可配置的 API |
+| --- | --- | --- |
+| Microsoft 翻译 | 浏览器翻译，新安装默认使用 | [Microsoft Translator API（Azure）](https://learn.microsoft.com/azure/ai-services/translator/text-translation/reference/authentication)：API Key、Endpoint，部分资源需要区域 |
+| Google 翻译 | Google Web Translate | [Google Cloud Translation](https://docs.cloud.google.com/translate/docs/reference/rest/v2/translate)：API Key |
+| 腾讯翻译 | TranSmart | [腾讯 TokenHub](https://cloud.tencent.com/document/product/1823/132252)：API Key、Base URL、翻译模型，默认 hy-mt2-lite |
+| Yandex 翻译 | 网页翻译 | [Yandex Cloud Translate](https://aistudio.yandex.ru/en/docs/translate/quickstart)：API Key，按账号要求填写 Folder ID |
+| 火山翻译 | 浏览器翻译 | [火山引擎机器翻译](https://docs.volcengine.com/docs/MachineTranslation/TextTranslationAPI?lang=zh)：Access Key ID、Secret Access Key、区域 |
+| MyMemory | 匿名使用，每天限 5,000 字符 | [MyMemory RapidAPI](https://rapidapi.com/translated/api/mymemory-translation-memory)：订阅对应方案并填写 RapidAPI Key |
+
+切回免费服务会保留已填写的 API 凭据，但不会使用它们。免费服务限流或失败时不会自动切到 API，也不会转发给其他供应商。旧版独立的 Azure、Google Cloud 配置会合并至对应服务商，保留凭据和使用方式；同时存在两套不同订阅时保留独立配置。
 
 | 服务 | 所需配置 |
 | --- | --- |
-| Google Web Translate | 无需密钥，默认启用 |
-| Microsoft Translator | Azure Translator API Key，部分资源需要填写区域 |
-| Google Cloud Translation | Google Cloud API Key |
 | DeepSeek / Zhipu GLM | 对应平台的 API Key 和模型 |
 | OpenAI Compatible | 服务地址、模型及服务要求的 API Key；支持兼容接口的本地服务 |
 | Anthropic Compatible | 添加自定义 LLM 服务，填写服务地址、模型及所需密钥 |
 | HTTP Template | 接口地址、请求参数和响应格式 |
 | Firefox 本地翻译（实验） | 预先下载或导入语言模型，无需密钥，准备完成后可离线使用 |
 
-Google Web Translate 使用非官方网页接口，可能受到限流、地区限制或接口变更影响。第三方服务的可用性、用量限制和费用以服务商为准。
+Microsoft、Google、腾讯、Yandex 和火山的免费选项使用浏览器或网页翻译接口，可能受到限流、地区限制或接口变更影响；不可用时可手动切换另一项服务。第三方服务的可用性、用量限制和费用以服务商为准。
+
+MyMemory 使用公开翻译 API，适合少量文本。匿名使用每天限 5,000 字符，单次最多 500 字节，长文本会自动分段；默认使用较小分块和单并发。源语言自动检测由浏览器在本机完成，无法可靠识别时需手动选择。额度用完后会提示切换服务，扩展不会自动将文本转发到其他供应商。
 
 ### Firefox 本地翻译（实验）
 
@@ -228,6 +252,10 @@ Google Web Translate 使用非官方网页接口，可能受到限流、地区�
 <summary>高级配置：LLM 服务、Ollama 与 HTTP 模板</summary>
 
 ### LLM 服务
+
+模型右侧的「＋」可为当前服务添加模型或修改当前模型名称，保存后立即选用；自定义模型会随该服务保存在本地，服务地址和 API Key 保留。选择模型后，可点击同一行的「测试服务」验证连接。
+
+「性能设置」集中调整通用分块与并发参数、当前服务是否继承通用参数，以及 PDF 翻译范围。切换翻译服务时，当前服务的性能设置随之切换。
 
 DeepSeek 内置预设使用官方 API，默认模型为 `deepseek-flash`，也可选择 `deepseek-v4-pro`，并默认关闭思考模式以减少翻译延迟。旧 Flash 模型配置会自动迁移为 `deepseek-flash`，模型名称以 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/) 为准。OpenAI Compatible 适用于 OpenAI、兼容 `/chat/completions` 的网关，以及其他采用相同请求格式的服务。Anthropic Compatible 支持 Messages API 格式。这些 LLM 服务都可以自定义 Base URL、API Key、模型与系统提示词。
 

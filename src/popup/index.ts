@@ -6,6 +6,9 @@ import "./styles.css";
 import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
 import { isLikelyPdfUrl } from "../pdf/launch";
 import { localProviderNotice } from "../shared/local-notice";
+import { enhanceProviderSelect } from "../shared/provider-picker";
+import { normalizeAutoTranslation, setAutoTranslationEnabled } from "../shared/auto-translation";
+import { SETTINGS_KEY } from "../shared/defaults";
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -14,6 +17,7 @@ const translationDisplayMode = query<HTMLSelectElement>("#translationDisplayMode
 const status = query<HTMLParagraphElement>("#status");
 const pageToggleButton = query<HTMLButtonElement>("#pageToggle");
 const paragraphModeButton = query<HTMLButtonElement>("#paragraphMode");
+const autoTranslationButton = query<HTMLButtonElement>("#autoTranslation");
 const floatingBallButton = query<HTMLButtonElement>("#floatingBall");
 const imageTranslationButton = query<HTMLButtonElement>("#imageTranslation");
 const debugButton = query<HTMLButtonElement>("#debug");
@@ -27,6 +31,8 @@ const WEBSITE_URL = "https://wupage.mrwuliu.top/";
 let settings: ExtensionSettings;
 let paragraphMode = false;
 let paragraphModeAvailable = true;
+let paragraphModeError: string | undefined;
+let autoTranslationNotice: string | undefined;
 let pageTranslated = false;
 let pageActionVersion = 0;
 let floatingBallEnabled = true;
@@ -49,11 +55,14 @@ async function init(): Promise<void> {
     .map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.label)}</option>`)
     .join("");
   provider.value = settings.activeProviderId;
+  enhanceProviderSelect(provider, settings.providers);
   updateLocalNotice();
   translationDisplayMode.innerHTML = TRANSLATION_DISPLAY_MODES
     .map((mode) => `<option value="${mode.value}">${mode.label}</option>`)
     .join("");
   translationDisplayMode.value = settings.translationDisplayMode;
+  updateAutoTranslationButton();
+  autoTranslationButton.addEventListener("click", toggleAutoTranslation);
   floatingBallEnabled = settings.floatingBallEnabled;
   updateFloatingBallButton();
   setImageTranslationToggle(imageTranslationButton, settings.imageTranslationEnabled === true);
@@ -87,7 +96,7 @@ async function init(): Promise<void> {
   paragraphModeButton.addEventListener("click", toggleParagraphMode);
   floatingBallButton.addEventListener("click", toggleFloatingBall);
   imageTranslationButton.addEventListener("click", async () => {
-    imageTranslationButton.disabled = true;
+    setButtonBusy(imageTranslationButton, true);
     const previous = settings.imageTranslationEnabled === true;
     try {
       settings.imageTranslationEnabled = !previous;
@@ -98,7 +107,7 @@ async function init(): Promise<void> {
       settings.imageTranslationEnabled = previous;
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      imageTranslationButton.disabled = false;
+      setButtonBusy(imageTranslationButton, false);
     }
   });
   debugButton.addEventListener("click", openDebugPanel);
@@ -110,6 +119,28 @@ async function init(): Promise<void> {
   websiteButton.addEventListener("click", () => {
     void chrome.tabs.create({ url: WEBSITE_URL });
   });
+  const settingsChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string): void => {
+    const incoming = changes[SETTINGS_KEY]?.newValue as ExtensionSettings | undefined;
+    if (area !== "local" || !incoming || autoTranslationButton.getAttribute("aria-busy") === "true") return;
+    settings.autoTranslation = normalizeAutoTranslation(incoming.autoTranslation);
+    updateAutoTranslationButton();
+  };
+  chrome.storage?.onChanged?.addListener(settingsChanged);
+  let syncing = false;
+  const timer = !activeTabIsPdf && pageTranslationAvailable && activeTab?.id
+    ? window.setInterval(() => {
+      if (syncing || pageToggleButton.getAttribute("aria-busy") === "true") return;
+      syncing = true;
+      const version = pageActionVersion;
+      void sendTabMessage<{ translated: boolean }>(activeTab.id!, { type: "GET_TRANSLATION_STATE" }).then(result => {
+        if (version !== pageActionVersion || pageToggleButton.getAttribute("aria-busy") === "true") return;
+        if (pageTranslated !== result.translated) { pageTranslated = result.translated; updatePageToggleButton(); }
+      }).catch(() => {}).finally(() => { syncing = false; });
+    }, 500) : undefined;
+  window.addEventListener("pagehide", () => {
+    if (timer !== undefined) clearInterval(timer);
+    chrome.storage?.onChanged?.removeListener?.(settingsChanged);
+  }, { once: true });
 }
 
 async function savePopupSettings(): Promise<void> {
@@ -214,13 +245,9 @@ async function togglePageTranslation(): Promise<void> {
   }
 }
 
-function setBusy(value: boolean): void {
-  document.body.classList.toggle("is-busy", value);
-  pageToggleButton.disabled = value || !pageTranslationAvailable;
-  paragraphModeButton.disabled = value || !paragraphModeAvailable;
-  floatingBallButton.disabled = value;
-  debugButton.disabled = value || !pageTranslationAvailable || activeTabIsPdf;
-  clearCacheButton.disabled = value;
+function setButtonBusy(button: HTMLButtonElement, value: boolean): void {
+  button.disabled = value;
+  button.setAttribute("aria-busy", String(value));
 }
 
 async function openPdfTranslator(): Promise<void> {
@@ -305,9 +332,46 @@ async function loadTranslationState(): Promise<void> {
   }
 }
 
+async function toggleAutoTranslation(): Promise<void> {
+  if (autoTranslationNotice && status.textContent === autoTranslationNotice) setStatus("");
+  autoTranslationNotice = undefined;
+  const enabled = autoTranslationButton.getAttribute("aria-pressed") !== "true";
+  let previous = normalizeAutoTranslation(settings.autoTranslation);
+  setButtonBusy(autoTranslationButton, true);
+  try {
+    const latest = await sendRuntimeMessage<ExtensionSettings>({ type: "GET_SETTINGS" });
+    previous = normalizeAutoTranslation(latest.autoTranslation);
+    settings = { ...latest, autoTranslation: setAutoTranslationEnabled(previous, enabled) };
+    await sendRuntimeMessage({ type: "SAVE_SETTINGS", settings });
+    updateAutoTranslationButton();
+    const rules = settings.autoTranslation!;
+    if (enabled && !rules.nonTargetLanguage && !rules.presetSites.length && !rules.customSites.some(site => site.enabled)) {
+      autoTranslationNotice = "自动翻译已开启，请在设置中启用站点或语言规则。";
+      setStatus(autoTranslationNotice);
+    }
+  } catch (error) {
+    settings = { ...settings, autoTranslation: previous };
+    updateAutoTranslationButton();
+    autoTranslationNotice = error instanceof Error ? error.message : String(error);
+    setStatus(autoTranslationNotice);
+  } finally { setButtonBusy(autoTranslationButton, false); }
+}
+
+function updateAutoTranslationButton(): void {
+  const rules = normalizeAutoTranslation(settings.autoTranslation);
+  autoTranslationButton.setAttribute("aria-pressed", String(rules.enabled));
+  autoTranslationButton.title = rules.nonTargetLanguage ? "自动翻译非目标语言页面；可在设置中限定站点" : "按已配置的站点规则自动翻译";
+  if (autoTranslationButton.hasAttribute("data-loading")) {
+    void autoTranslationButton.offsetWidth;
+    autoTranslationButton.removeAttribute("data-loading");
+    autoTranslationButton.disabled = false;
+  }
+}
+
 async function toggleParagraphMode(): Promise<void> {
-  setBusy(true);
-  setStatus("正在切换段落模式...");
+  setButtonBusy(paragraphModeButton, true);
+  if (paragraphModeError && status.textContent === paragraphModeError) setStatus("");
+  paragraphModeError = undefined;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab.id) throw new Error("没有活动标签页。");
@@ -317,17 +381,19 @@ async function toggleParagraphMode(): Promise<void> {
     });
     paragraphMode = result.enabled;
     updateParagraphModeButton();
-    setStatus(paragraphMode ? "段落模式已开启。" : "段落模式已关闭。");
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
+    paragraphModeError = error instanceof Error ? error.message : String(error);
+    setStatus(paragraphModeError);
   } finally {
-    setBusy(false);
+    setButtonBusy(paragraphModeButton, false);
   }
 }
 
 async function toggleFloatingBall(): Promise<void> {
-  setBusy(true);
+  setButtonBusy(floatingBallButton, true);
   setStatus("正在切换悬浮球...");
+  const previous = floatingBallEnabled;
+  let saved = false;
   try {
     floatingBallEnabled = !floatingBallEnabled;
     settings = {
@@ -335,6 +401,7 @@ async function toggleFloatingBall(): Promise<void> {
       floatingBallEnabled
     };
     await sendRuntimeMessage({ type: "SAVE_SETTINGS", settings });
+    saved = true;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (pageTranslationAvailable && !activeTabIsPdf && tab.id) {
       await sendTabMessage<{ enabled: boolean }>(tab.id, {
@@ -345,10 +412,14 @@ async function toggleFloatingBall(): Promise<void> {
     updateFloatingBallButton();
     setStatus(floatingBallEnabled ? "悬浮球已开启。" : "悬浮球已关闭。");
   } catch (error) {
+    if (!saved) {
+      floatingBallEnabled = previous;
+      settings = { ...settings, floatingBallEnabled };
+    }
     updateFloatingBallButton();
     setStatus(error instanceof Error ? error.message : String(error));
   } finally {
-    setBusy(false);
+    setButtonBusy(floatingBallButton, false);
   }
 }
 
@@ -357,7 +428,7 @@ async function openDebugPanel(): Promise<void> {
     setStatus("此页面无法打开 Debug，请切换到普通网页。");
     return;
   }
-  setBusy(true);
+  setButtonBusy(debugButton, true);
   setStatus("正在打开 Debug...");
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -369,12 +440,12 @@ async function openDebugPanel(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
   } finally {
-    setBusy(false);
+    setButtonBusy(debugButton, false);
   }
 }
 
 async function clearCache(): Promise<void> {
-  setBusy(true);
+  setButtonBusy(clearCacheButton, true);
   setStatus("正在清除缓存...");
   try {
     const result = await sendRuntimeMessage<{ removed: number }>({
@@ -384,7 +455,7 @@ async function clearCache(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
   } finally {
-    setBusy(false);
+    setButtonBusy(clearCacheButton, false);
   }
 }
 
@@ -393,9 +464,10 @@ function updateParagraphModeButton(): void {
 }
 
 function updatePageToggleButton(): void {
-  pageToggleButton.textContent = activeTabIsPdf
+  const label = activeTabIsPdf
     ? "翻译PDF"
     : pageTranslated ? "显示全文" : "翻译全文";
+  if (pageToggleButton.textContent !== label) pageToggleButton.textContent = label;
 }
 
 function updateFloatingBallButton(): void {

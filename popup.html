@@ -36,25 +36,36 @@
         显示模式
         <select id="translationDisplayMode"></select>
       </label>
-      <button id="paragraphMode" type="button" class="switch-row" aria-pressed="false">
-        <span>段落模式</span>
-        <span class="switch" aria-hidden="true"><span></span></span>
-      </button>
-      <button id="floatingBall" type="button" class="switch-row" aria-pressed="true">
-        <span>悬浮球</span>
-        <span class="switch" aria-hidden="true"><span></span></span>
-      </button>
-      <div class="image-feature" data-loading aria-busy="true">
-      <div class="image-feature-row">
-      <button id="imageTranslation" type="button" class="switch-row" disabled aria-describedby="ocrDescription ocrModelStatus" title="开启后，点击图片旁的按钮翻译并覆盖原文">
-        <span>图片翻译</span>
-        <span class="switch" aria-hidden="true"><span></span></span>
-      </button>
-      <button id="ocrModelAction" type="button" class="ocr-model-action" aria-label="安装 OCR 模型" disabled></button>
-      </div>
-      <p id="ocrDescription" class="ocr-description"></p>
-      <progress id="ocrModelProgress" class="ocr-model-progress" aria-label="OCR 模型下载进度" hidden></progress>
-      <p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
+      <div class="feature-toggles">
+        <button id="autoTranslation" type="button" class="switch-row" data-loading disabled title="按站点或页面语言规则自动翻译">
+          <span>自动翻译</span>
+          <span class="switch" aria-hidden="true"><span></span></span>
+        </button>
+        <div class="toggle-pair">
+          <button id="paragraphMode" type="button" class="switch-row" aria-pressed="false">
+            <span>段落模式</span>
+            <span class="switch" aria-hidden="true"><span></span></span>
+          </button>
+          <button id="floatingBall" type="button" class="switch-row" aria-pressed="true">
+            <span>悬浮球</span>
+            <span class="switch" aria-hidden="true"><span></span></span>
+          </button>
+        </div>
+        <div class="image-feature" data-loading aria-busy="true">
+          <div class="image-feature-row">
+            <div class="image-toggle-card">
+              <label id="imageTranslationLabel" for="imageTranslation">图片翻译</label>
+              <div class="ocr-help-slot"></div>
+              <button id="imageTranslation" type="button" class="switch-row image-toggle-switch" disabled aria-labelledby="imageTranslationLabel" aria-describedby="ocrDescription ocrModelStatus" title="开启后，点击图片旁的按钮翻译并覆盖原文">
+                <span class="switch" aria-hidden="true"><span></span></span>
+              </button>
+            </div>
+            <button id="ocrModelAction" type="button" class="ocr-model-action" aria-label="安装 OCR 模型" disabled></button>
+          </div>
+          <p id="ocrDescription" class="ocr-description"></p>
+          <progress id="ocrModelProgress" class="ocr-model-progress" aria-label="OCR 模型下载进度" hidden></progress>
+          <p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
+        </div>
       </div>
       <div class="actions">
         <button id="pageToggle" type="button" disabled>翻译全文</button>

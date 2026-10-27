@@ -1,10 +1,12 @@
 import type {
   AnthropicCompatibleConfig,
   DeepSeekConfig,
+  DualServiceProviderConfig,
   GoogleCloudTranslationConfig,
   GoogleWebTranslateConfig,
   HttpTemplateConfig,
   MicrosoftTranslatorConfig,
+  MicrosoftWebTranslateConfig,
   OpenAICompatibleConfig,
   ProviderConfig,
   TranslateBatchRequest,
@@ -20,6 +22,8 @@ import { readPath, renderTemplate } from "./template";
 import { chatCompletionsEndpoint, usesOllamaCompatibility, withOllamaCompatibility } from "./ollama-compatibility";
 import { TranslationResponseError } from "./translation-response";
 import { translateLocally } from "./local";
+import { supportsServiceMode, translationApiOptions } from "../shared/translation-service";
+import { signVolcengineTranslation } from "./volcengine-signing";
 
 const GOOGLE_WEB_REQUEST_CONCURRENCY = 4;
 const WEB_TRANSLATION_TIMEOUT_MS = 20_000;
@@ -94,12 +98,27 @@ Estimate the original text color and the local background color behind the text.
 }
 
 export function createProvider(config: ProviderConfig): TranslatorProvider {
+  if (supportsServiceMode(config) && config.serviceMode === "api") {
+    const api = translationApiOptions(config);
+    if (config.type === "microsoft-web-translate") return new MicrosoftTranslatorProvider({
+      ...config, type: "microsoft-translator", endpoint: api.endpoint ?? "", apiKey: api.apiKey ?? "", region: api.region ?? ""
+    });
+    if (config.type === "google-web-translate") return new GoogleCloudTranslationProvider({
+      ...config, type: "google-cloud-translation", apiKey: api.apiKey ?? ""
+    });
+    if (config.type !== "mymemory") return new CloudTranslationProvider(config);
+  }
   if (config.type === "firefox-local") return {
     id: config.id, label: config.label,
     validateConfig: () => ({ ok: true }),
     translateBatch: translateLocally
   };
   if (config.type === "google-web-translate") return new GoogleWebTranslateProvider(config);
+  if (config.type === "microsoft-web-translate") return new MicrosoftWebTranslateProvider(config);
+  if (config.type === "tencent-transmart" || config.type === "yandex-web-translate"
+    || config.type === "volcengine-web-translate" || config.type === "mymemory") {
+    return new PublicTranslationProvider(config);
+  }
   if (config.type === "microsoft-translator") return new MicrosoftTranslatorProvider(config);
   if (config.type === "google-cloud-translation") {
     return new GoogleCloudTranslationProvider(config);
@@ -154,6 +173,323 @@ class GoogleWebTranslateProvider implements TranslatorProvider {
   }
 }
 
+class MicrosoftWebTranslateProvider implements TranslatorProvider {
+  get id(): string {
+    return this.config.id;
+  }
+
+  get label(): string {
+    return this.config.label;
+  }
+
+  constructor(private readonly config: MicrosoftWebTranslateConfig) {}
+
+  validateConfig(): ValidationResult {
+    return { ok: true };
+  }
+
+  async translateBatch(request: TranslateBatchRequest, signal?: AbortSignal): Promise<string[]> {
+    if (!request.texts.length) return [];
+    const endpoint = new URL("https://edge.microsoft.com/translate/translatetext");
+    endpoint.searchParams.set("from", request.sourceLang && request.sourceLang !== "auto"
+      ? normalizeMicrosoftLang(request.sourceLang) : "");
+    endpoint.searchParams.set("to", normalizeMicrosoftLang(request.targetLang));
+    endpoint.searchParams.set("isEnterpriseClient", "false");
+    const prepared = request.texts.map(prepareMicrosoftWebText);
+
+    // This browser endpoint interprets angle brackets as markup even for plain
+    // text. Escape them before transport and decode the returned text once.
+    const response = await fetchWithTimeout(endpoint.toString(), {
+      method: "POST",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prepared.map((item) => item.text)),
+      signal
+    }, WEB_TRANSLATION_TIMEOUT_MS);
+    if (!response.ok) throw new Error(`Microsoft 免费翻译请求失败 (${response.status})。请稍后重试或切换翻译服务。`);
+    const payload = await readJsonResponse<MicrosoftTranslateResponse>(response, "Microsoft Web Translate");
+    if (!Array.isArray(payload) || payload.length !== request.texts.length) {
+      throw new TranslationResponseError("Microsoft Web Translate response count does not match source text count.");
+    }
+    return payload.map((entry, index) => {
+      const text = entry?.translations?.[0]?.text;
+      if (typeof text !== "string" || !text.trim()) {
+        throw new TranslationResponseError("Microsoft Web Translate response did not include translated text.");
+      }
+      return restoreLiteralEntities(decodeHtmlEntities(text), prepared[index].entities);
+    });
+  }
+}
+
+function prepareMicrosoftWebText(source: string): {
+  text: string;
+  entities: Array<{ marker: string; literal: string }>;
+} {
+  const prepared = protectLiteralEntities(source);
+  return { ...prepared, text: prepared.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
+}
+
+function protectLiteralEntities(source: string): {
+  text: string;
+  entities: Array<{ marker: string; literal: string }>;
+} {
+  // Literal entity text (such as documentation showing &lt;) must not be
+  // interpreted or decoded by the upstream HTML processor.
+  let prefix = "WUPAGEENTITY";
+  while (source.includes(prefix)) prefix += "X";
+  const entities: Array<{ marker: string; literal: string }> = [];
+  const protectedText = source.replace(/&(?:#\d+|#x[\da-f]+|[a-z][\da-z]*);/gi, (literal) => {
+    const marker = `⟪${prefix}${entities.length}⟫`;
+    entities.push({ marker, literal });
+    return marker;
+  });
+  return { text: protectedText, entities };
+}
+
+function restoreLiteralEntities(text: string, entities: Array<{ marker: string; literal: string }>): string {
+  for (const { marker, literal } of entities) {
+    if (text.split(marker).length !== 2) {
+      throw new TranslationResponseError("Translation response did not preserve literal entities.");
+    }
+    text = text.replace(marker, () => literal);
+  }
+  return text;
+}
+
+class CloudTranslationProvider implements TranslatorProvider {
+  constructor(private readonly config: DualServiceProviderConfig) {}
+  get id(): string { return this.config.id; }
+  get label(): string { return this.config.label; }
+
+  validateConfig(): ValidationResult {
+    const api = translationApiOptions(this.config);
+    if (this.config.type === "volcengine-web-translate") {
+      return api.accessKeyId?.trim() && api.secretAccessKey?.trim()
+        ? { ok: true } : { ok: false, message: "请填写火山引擎 Access Key ID 和 Secret Access Key。" };
+    }
+    if (!api.apiKey?.trim()) return { ok: false, message: "请填写 API Key，或切换到免费服务。" };
+    if (this.config.type === "tencent-transmart") {
+      try {
+        const url = new URL(api.endpoint ?? "");
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error();
+      } catch { return { ok: false, message: "请填写有效的 HTTPS Base URL。" }; }
+      if (!api.model?.trim()) return { ok: false, message: "请填写 TokenHub 翻译模型。" };
+    }
+    return { ok: true };
+  }
+
+  async translateBatch(request: TranslateBatchRequest, signal?: AbortSignal): Promise<string[]> {
+    const validation = this.validateConfig();
+    if (!validation.ok) throw new Error(validation.message);
+    signal?.throwIfAborted();
+    if (!request.texts.length) return [];
+    const api = translationApiOptions(this.config);
+    if (this.config.type === "tencent-transmart") {
+      return mapWithConcurrency(request.texts, 1, async text => {
+        const payload = await this.request<{ choices?: Array<{ message?: { content?: unknown } }> }>(
+          chatCompletionsEndpoint(api.endpoint!), { "Content-Type": "application/json", Authorization: `Bearer ${api.apiKey}` },
+          { model: api.model, stream: false, messages: [{ role: "user", content:
+            `Translate the following text${request.sourceLang && request.sourceLang !== "auto" ? ` from ${request.sourceLang}` : ""} into ${request.targetLang}. Preserve placeholders, numbers, links and formatting. Return only the translated text.\n\n${text}` }] }, signal);
+        const translated = payload.choices?.[0]?.message?.content;
+        if (typeof translated !== "string" || !translated.trim()) throw new Error("TokenHub 未返回完整译文。");
+        return translated;
+      });
+    }
+    const result: string[] = [];
+    const limit = this.config.type === "volcengine-web-translate" ? 5000 : 10000;
+    // Respect both the item count and character limit of the official batch endpoints.
+    for (let cursor = 0; cursor < request.texts.length;) {
+      const texts: string[] = []; let length = 0;
+      while (cursor < request.texts.length && texts.length < 16 && length + request.texts[cursor].length <= limit) {
+        const text = request.texts[cursor++]; texts.push(text); length += text.length;
+      }
+      if (!texts.length) throw new Error(`${this.label} 单段文本超过 ${limit} 字符，请减小分块大小。`);
+      const source = request.sourceLang && request.sourceLang !== "auto" ? normalizePublicLanguage(request.sourceLang) : undefined;
+      if (this.config.type === "yandex-web-translate") {
+        const payload = await this.request<{ translations?: Array<{ text?: unknown }> }>(
+          "https://translate.api.cloud.yandex.net/translate/v2/translate",
+          { "Content-Type": "application/json", Authorization: `Api-Key ${api.apiKey}` },
+          { texts, targetLanguageCode: normalizePublicLanguage(request.targetLang), format: "PLAIN_TEXT",
+            ...(source ? { sourceLanguageCode: source } : {}), ...(api.folderId ? { folderId: api.folderId } : {}) }, signal);
+        result.push(...this.checkTranslations(payload.translations?.map(entry => entry.text), texts.length));
+      } else {
+        const body = { TextList: texts, TargetLanguage: normalizePublicLanguage(request.targetLang), ...(source ? { SourceLanguage: source } : {}) };
+        const headers = await signVolcengineTranslation(JSON.stringify(body), api.accessKeyId!, api.secretAccessKey!, api.region || "cn-north-1");
+        const payload = await this.request<{ TranslationList?: Array<{ Translation?: unknown }>;
+          ResponseMetadata?: { Error?: { Code?: string; Message?: string } } }>(
+          "https://translate.volcengineapi.com/?Action=TranslateText&Version=2020-06-01", headers, body, signal);
+        if (payload.ResponseMetadata?.Error) throw new Error(`火山引擎 API 请求失败：${payload.ResponseMetadata.Error.Code || "未知错误"}`);
+        result.push(...this.checkTranslations(payload.TranslationList?.map(entry => entry.Translation), texts.length));
+      }
+    }
+    return result;
+  }
+
+  private checkTranslations(values: unknown[] | undefined, count: number): string[] {
+    if (!Array.isArray(values) || values.length !== count || values.some(text => typeof text !== "string" || !text.trim())) {
+      throw new Error(`${this.label} API 未返回完整译文。`);
+    }
+    return values as string[];
+  }
+
+  private async request<T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    const response = await fetchWithTimeout(url, { method: "POST", headers, body: JSON.stringify(body), credentials: "omit", redirect: "error", signal }, API_TRANSLATION_TIMEOUT_MS);
+    if (!response.ok) throw new Error(`${this.label} API 请求失败 (${response.status})，请检查凭据、额度或使用方式。`);
+    return readJsonResponse<T>(response, this.label);
+  }
+}
+
+type PublicTranslationConfig = Extract<ProviderConfig, {
+  type: "tencent-transmart" | "yandex-web-translate" | "volcengine-web-translate" | "mymemory";
+}>;
+let transmartClientId: string | undefined;
+
+class PublicTranslationProvider implements TranslatorProvider {
+  constructor(private readonly config: PublicTranslationConfig) {}
+
+  get id(): string { return this.config.id; }
+  get label(): string { return this.config.label; }
+  validateConfig(): ValidationResult {
+    return this.config.type === "mymemory" && this.config.serviceMode === "api" && !this.config.api?.apiKey?.trim()
+      ? { ok: false, message: "请填写 RapidAPI Key，或切换到免费服务。" } : { ok: true };
+  }
+
+  async translateBatch(request: TranslateBatchRequest, signal?: AbortSignal): Promise<string[]> {
+    const validation = this.validateConfig();
+    if (!validation.ok) throw new Error(validation.message);
+    signal?.throwIfAborted();
+    if (!request.texts.length) return [];
+    const from = request.sourceLang && request.sourceLang !== "auto" ? normalizePublicLanguage(request.sourceLang) : "auto";
+    const to = normalizePublicLanguage(request.targetLang);
+    if (this.config.type === "tencent-transmart") {
+      transmartClientId ??= `browser-chrome-120.0.0-Windows-${crypto.randomUUID()}-${Date.now()}`;
+      const payload = await this.requestJson<{ header?: { ret_code?: string }; auto_translation?: unknown }>(
+        "https://transmart.qq.com/api/imt", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            header: { fn: "auto_translation", client_key: transmartClientId },
+            type: "plain", model_category: "normal",
+            source: { text_list: request.texts, lang: from }, target: { lang: to }
+          })
+        }, signal
+      );
+      if (payload?.header?.ret_code !== "succ") throw new Error("腾讯 TranSmart 暂时无法翻译，请稍后重试或切换服务。");
+      return validatePublicTranslations(payload.auto_translation, request.texts.length);
+    }
+    if (this.config.type === "mymemory") return this.translateMyMemory(request, signal);
+    return mapWithConcurrency(request.texts, 1, async text => {
+      signal?.throwIfAborted();
+      if (this.config.type === "yandex-web-translate") {
+        const url = new URL("https://translate.yandex.net/api/v1/tr.json/translate");
+        url.search = new URLSearchParams({ id: `${crypto.randomUUID().replace(/-/g, "")}-0-0`, srv: "android",
+          target_lang: to, text, ...(from !== "auto" ? { source_lang: from } : {}) }).toString();
+        const payload = await this.requestJson<{ code?: number; text?: unknown }>(url.toString(), { method: "POST" }, signal);
+        if (payload?.code !== 200) throw new Error(`Yandex 免费翻译暂时不可用 (${payload?.code ?? "未知错误"})，请稍后重试或切换服务。`);
+        return validatePublicTranslations(payload.text, 1)[0];
+      }
+      const payload = await this.requestJson<{ translation?: unknown; base_resp?: { status_code?: number } }>(
+        "https://translate.volcengine.com/crx/translate/v1", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_language: from, target_language: to, text })
+        }, signal
+      );
+      if (payload?.base_resp?.status_code !== 0) throw new Error("火山免费翻译暂时不可用，请稍后重试或切换服务。");
+      return validatePublicTranslations([payload.translation], 1)[0];
+    });
+  }
+
+  private async requestJson<T>(url: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    const response = await fetchWithTimeout(url, { ...init, credentials: "omit", signal }, WEB_TRANSLATION_TIMEOUT_MS);
+    if (!response.ok) {
+      if (this.config.type === "mymemory" && response.status === 429) throw this.myMemoryQuotaError();
+      throw new Error(`${this.label} 请求失败 (${response.status})，请稍后重试或切换服务。`);
+    }
+    return readJsonResponse<T>(response, this.label);
+  }
+
+  private async translateMyMemory(request: TranslateBatchRequest, signal?: AbortSignal): Promise<string[]> {
+    let source = request.sourceLang;
+    if (!source || source === "auto") {
+      if (typeof chrome === "undefined" || !chrome.i18n?.detectLanguage) {
+        throw new Error("MyMemory 无法自动识别源语言，请手动选择源语言后重试。");
+      }
+      const detected = await chrome.i18n.detectLanguage(request.texts.join("\n").slice(0, 12000));
+      signal?.throwIfAborted();
+      const best = detected.languages[0];
+      if (!best || best.language === "und" || best.percentage < 50) {
+        throw new Error("MyMemory 无法可靠识别源语言，请手动选择源语言后重试。");
+      }
+      source = best.language;
+    }
+    if (normalizePublicLanguage(source) === normalizePublicLanguage(request.targetLang)) return [...request.texts];
+    const langpair = `${source}|${request.targetLang}`;
+    return mapWithConcurrency(request.texts, 1, async text => {
+      const prepared = protectLiteralEntities(text);
+      const pieces = splitMyMemoryText(prepared.text);
+      const translated = await mapWithConcurrency(pieces, 1, async piece => {
+        signal?.throwIfAborted();
+        if (!piece.trim()) return piece;
+        const leading = piece.match(/^\s*/u)![0];
+        const trailing = piece.match(/\s*$/u)![0];
+        const useApi = this.config.serviceMode === "api";
+        const host = "translated-mymemory---translation-memory.p.rapidapi.com";
+        const url = new URL(useApi ? `https://${host}/api/get` : "https://api.mymemory.translated.net/get");
+        url.search = new URLSearchParams({ q: piece.trim(), langpair }).toString();
+        const headers: Record<string, string> = useApi
+          ? { "X-RapidAPI-Key": this.config.api?.apiKey ?? "", "X-RapidAPI-Host": host } : {};
+        const payload = await this.requestJson<{ responseStatus?: number | string; quotaFinished?: boolean; responseDetails?: string;
+          responseData?: { translatedText?: unknown } }>(url.toString(), { method: "GET", headers, redirect: "error" }, signal);
+        if (payload?.quotaFinished === true || Number(payload?.responseStatus) === 429
+          || (Number(payload?.responseStatus) === 403 && /quota|used all|limit|next available/i.test(payload?.responseDetails ?? ""))) {
+          throw this.myMemoryQuotaError();
+        }
+        if (Number(payload?.responseStatus) !== 200) throw new Error("MyMemory 暂时无法翻译，请检查源语言或切换服务。");
+        return leading + decodeHtmlEntities(validatePublicTranslations([payload.responseData?.translatedText], 1)[0]).trim() + trailing;
+      });
+      return restoreLiteralEntities(translated.join(""), prepared.entities);
+    });
+  }
+
+  private myMemoryQuotaError(): Error {
+    return new Error(this.config.serviceMode === "api"
+      ? "MyMemory API 额度已用完，请检查 RapidAPI 订阅或切换服务。"
+      : "MyMemory 免费额度已用完，请次日重试或切换服务。");
+  }
+}
+
+function normalizePublicLanguage(value: string): string {
+  return /^(?:zh|zh-cn|zh-hans)$/i.test(value) ? "zh" : value;
+}
+
+function validatePublicTranslations(value: unknown, count: number): string[] {
+  if (!Array.isArray(value) || value.length !== count || value.some(text => typeof text !== "string" || !text.trim())) {
+    throw new TranslationResponseError("Translation response did not include the expected nonempty text items.");
+  }
+  return value as string[];
+}
+
+function splitMyMemoryText(text: string): string[] {
+  const encoder = new TextEncoder();
+  const output: string[] = [];
+  let current = "";
+  // Keep Unicode code points and translation placeholders intact at the byte boundary.
+  for (const token of text.match(/⟪WUPAGE[^⟫]*⟫|[\s\S]/gu) ?? []) {
+    if (encoder.encode(token).byteLength > 500) throw new Error("MyMemory 无法处理过长的受保护文本，请切换翻译服务。");
+    while (encoder.encode(current + token).byteLength > 500) {
+      let boundary = 0;
+      for (const match of current.matchAll(/[\s.!?。！？]+/gu)) boundary = match.index + match[0].length;
+      const split = boundary > current.length / 2 ? boundary : current.length;
+      output.push(current.slice(0, split));
+      current = current.slice(split);
+    }
+    current += token;
+  }
+  if (current) output.push(current);
+  return output;
+}
+
 class MicrosoftTranslatorProvider implements TranslatorProvider {
   get id(): string {
     return this.config.id;
@@ -168,6 +504,10 @@ class MicrosoftTranslatorProvider implements TranslatorProvider {
   validateConfig(): ValidationResult {
     if (!this.config.endpoint.trim()) return { ok: false, message: "Endpoint is required." };
     if (!this.config.apiKey.trim()) return { ok: false, message: "API key is required." };
+    try {
+      const url = new URL(this.config.endpoint);
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error();
+    } catch { return { ok: false, message: "请填写有效的 HTTPS Endpoint。" }; }
     return { ok: true };
   }
 
@@ -175,7 +515,8 @@ class MicrosoftTranslatorProvider implements TranslatorProvider {
     const validation = this.validateConfig();
     if (!validation.ok) throw new Error(validation.message);
 
-    const endpoint = new URL("/translate", this.config.endpoint.replace(/\/$/, ""));
+    const base = this.config.endpoint.replace(/\/+$/, "");
+    const endpoint = new URL(base.endsWith("/translate") ? base : `${base}/translate`);
     endpoint.searchParams.set("api-version", "3.0");
     endpoint.searchParams.set("to", normalizeMicrosoftLang(request.targetLang));
     if (request.sourceLang && request.sourceLang !== "auto") {
@@ -193,6 +534,8 @@ class MicrosoftTranslatorProvider implements TranslatorProvider {
     const response = await fetchWithTimeout(endpoint.toString(), {
       method: "POST",
       signal,
+      credentials: "omit",
+      redirect: "error",
       headers,
       body: JSON.stringify(request.texts.map((text) => ({ Text: text })))
     }, API_TRANSLATION_TIMEOUT_MS);
@@ -251,6 +594,8 @@ class GoogleCloudTranslationProvider implements TranslatorProvider {
     const response = await fetchWithTimeout(endpoint.toString(), {
       method: "POST",
       signal,
+      credentials: "omit",
+      redirect: "error",
       headers: {
         "Content-Type": "application/json"
       },

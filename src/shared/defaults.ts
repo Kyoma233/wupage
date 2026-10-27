@@ -1,9 +1,10 @@
 import type { ExtensionSettings } from "./types";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
+  autoTranslation: { enabled: false, nonTargetLanguage: false, presetSites: [], customSites: [] },
   targetLang: "zh-CN",
   sourceLang: "auto",
-  activeProviderId: "google-web-translate",
+  activeProviderId: "microsoft-web-translate",
   chunkSize: 1200,
   concurrency: 3,
   pdfTranslationPageRadius: 5,
@@ -14,26 +15,43 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   translationDisplayMode: "bilingual",
   providers: [
     {
-      type: "google-web-translate",
-      id: "google-web-translate",
-      label: "Google Web Translate",
+      type: "microsoft-web-translate",
+      id: "microsoft-web-translate",
+      label: "Microsoft 翻译",
       enabled: true
     },
     {
-      type: "microsoft-translator",
-      id: "microsoft-translator",
-      label: "Microsoft Translator",
-      enabled: true,
-      endpoint: "https://api.cognitive.microsofttranslator.com",
-      apiKey: "",
-      region: ""
+      type: "google-web-translate",
+      id: "google-web-translate",
+      label: "Google 翻译",
+      enabled: true
     },
     {
-      type: "google-cloud-translation",
-      id: "google-cloud-translation",
-      label: "Google Cloud Translation",
+      type: "tencent-transmart",
+      id: "tencent-transmart",
+      label: "腾讯翻译",
+      enabled: true
+    },
+    {
+      type: "yandex-web-translate",
+      id: "yandex-web-translate",
+      label: "Yandex 翻译",
+      enabled: true
+    },
+    {
+      type: "volcengine-web-translate",
+      id: "volcengine-web-translate",
+      label: "火山翻译",
+      enabled: true
+    },
+    {
+      type: "mymemory",
+      id: "mymemory",
+      label: "MyMemory",
       enabled: true,
-      apiKey: ""
+      performanceMode: "custom",
+      chunkSize: 400,
+      concurrency: 1
     },
     {
       type: "openai-compatible",

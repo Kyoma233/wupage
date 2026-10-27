@@ -1,6 +1,99 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProvider } from "../src/background/providers";
 
+describe("MicrosoftWebTranslateProvider", () => {
+  const provider = createProvider({
+    type: "microsoft-web-translate",
+    id: "microsoft-web-translate",
+    label: "Microsoft 免费翻译"
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("translates a batch without credentials and preserves plain-text angle brackets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { translations: [{ text: "你好" }] },
+      { translations: [{ text: "a &lt; b 和 c &gt; d &amp; e" }] }
+    ])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(provider.validateConfig()).toEqual({ ok: true });
+    await expect(provider.translateBatch({
+      texts: ["Hello", "a < b and c > d & e"], sourceLang: "en", targetLang: "zh-CN"
+    })).resolves.toEqual(["你好", "a < b 和 c > d & e"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const endpoint = new URL(url);
+    expect(endpoint.origin + endpoint.pathname).toBe("https://edge.microsoft.com/translate/translatetext");
+    expect(endpoint.searchParams.get("from")).toBe("en");
+    expect(endpoint.searchParams.get("to")).toBe("zh-Hans");
+    expect(endpoint.searchParams.get("isEnterpriseClient")).toBe("false");
+    expect(init).toMatchObject({
+      method: "POST", credentials: "omit", headers: { "Content-Type": "application/json" }
+    });
+    expect(Object.keys(init.headers!)).toEqual(["Content-Type"]);
+    expect(JSON.parse(String(init.body))).toEqual(["Hello", "a &lt; b and c &gt; d &amp; e"]);
+  });
+
+  it.each([undefined, "auto"])("lets the endpoint detect source language %s", async (sourceLang) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { translations: [{ text: "Hello" }] }
+    ])));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(provider.translateBatch({ texts: ["你好"], sourceLang, targetLang: "en" }))
+      .resolves.toEqual(["Hello"]);
+    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("from")).toBe("");
+  });
+
+  it("keeps literal entities intact even when source text contains a marker-like string", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, init: RequestInit) => {
+      const texts = JSON.parse(String(init.body)) as string[];
+      return new Response(JSON.stringify(texts.map((text) => ({
+        translations: [{ text: text.replace("Use", "使用") }]
+      }))));
+    }));
+    const source = "Use &lt;div&gt;, &#60; and &amp; literally. ⟪WUPAGEENTITY0⟫";
+    await expect(provider.translateBatch({ texts: [source], sourceLang: "en", targetLang: "zh-CN" }))
+      .resolves.toEqual([source.replace("Use", "使用")]);
+  });
+
+  it.each([{}, [], [null], [{}], [{ translations: [{ text: "" }] }]])(
+    "rejects incomplete responses instead of returning or caching them: %j", async (payload) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload))));
+      await expect(provider.translateBatch({ texts: ["Hello"], targetLang: "zh-CN" }))
+        .rejects.toThrow(/response count|translated text/);
+    }
+  );
+
+  it("reports rate limits without silently sending text to another service", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("Too many requests", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(provider.translateBatch({ texts: ["Hello"], targetLang: "zh-CN" }))
+      .rejects.toThrow("429");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards cancellation to the network request", async () => {
+    vi.stubGlobal("fetch", vi.fn((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    })));
+    const controller = new AbortController();
+    const result = provider.translateBatch({ texts: ["Hello"], targetLang: "zh-CN" }, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("does not request translation for an empty batch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(provider.translateBatch({ texts: [], targetLang: "zh-CN" })).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("MicrosoftTranslatorProvider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

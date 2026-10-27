@@ -9,6 +9,7 @@ import {
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { DEFAULT_SETTINGS } from "../shared/defaults";
 import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from "../shared/languages";
+import { enhanceProviderSelect } from "../shared/provider-picker";
 import { sendRuntimeMessage } from "../shared/messaging";
 import type {
   ExtensionSettings,
@@ -1059,6 +1060,7 @@ function renderProviders(): void {
     provider.append(option);
   }
   provider.value = settings.activeProviderId;
+  enhanceProviderSelect(provider, settings.providers);
 }
 
 function renderLanguageOptions(

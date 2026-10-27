@@ -13,6 +13,7 @@ import { getPageTranslationState, hidePageTranslation, setPageTranslationDisplay
 import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
 import { SETTINGS_KEY } from "../shared/defaults";
+import { initAutoTranslation } from "./auto-translation";
 
 addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
   handleMessage(request)
@@ -29,6 +30,7 @@ addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
 injectContentStyles();
 initFloatingBall();
 initImageTranslation();
+initAutoTranslation();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   const change = changes[SETTINGS_KEY];

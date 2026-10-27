@@ -145,6 +145,11 @@ select:focus-visible,
   max-width: 158px;
 }
 
+.provider-select {
+  width: 190px;
+  min-width: 0;
+}
+
 .language-arrow {
   color: #8fa19b;
 }

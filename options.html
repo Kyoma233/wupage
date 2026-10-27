@@ -32,12 +32,10 @@
           </div>
         </div>
         <div class="grid">
-          <label>译文显示模式
+          <label class="display-mode-field">译文显示模式
             <select id="translationDisplayMode"></select>
             <span id="translationDisplayModeDescription" class="field-description"></span>
           </label>
-          <label>默认分块大小 <input id="chunkSize" type="number" min="200" max="4000" /></label>
-          <label>全局最大并发数 <input id="concurrency" type="number" min="1" max="8" /></label>
         </div>
         <div class="general-toggles">
           <div class="image-feature" data-loading aria-busy="true">
@@ -71,20 +69,25 @@
         </div>
       </section>
 
-      <section id="pdfSettings">
-        <h2>PDF 翻译</h2>
-        <div class="grid">
-          <label>翻译范围
-            <select id="pdfTranslationScope" aria-describedby="pdfTranslationScopeDescription">
-              <option value="nearby">附近页面</option>
-              <option value="unlimited">无限制（整份 PDF）</option>
-            </select>
+      <section id="autoTranslationSettings">
+        <h2>自动翻译</h2>
+        <div class="auto-translation-controls">
+          <label class="setting-toggle auto-translation-master">
+            <span>启用自动翻译</span><input id="autoTranslateEnabled" type="checkbox" role="switch" aria-controls="autoTranslateNonTargetOption" />
+            <span class="setting-toggle-control" aria-hidden="true"></span>
           </label>
-          <label id="pdfTranslationPageRadiusField">前后各翻译页数
-            <input id="pdfTranslationPageRadius" type="number" min="0" max="1000" step="1" aria-describedby="pdfTranslationScopeDescription" />
+          <label id="autoTranslateNonTargetOption" class="auto-language-option" title="在本机识别页面语言，无法可靠识别时跳过；取消勾选后仅按站点列表翻译。" hidden>
+            <input id="autoTranslateNonTarget" type="checkbox" />
+            <span>页面语言不是目标语言时自动翻译</span>
           </label>
         </div>
-        <p id="pdfTranslationScopeDescription" class="field-description">开始翻译后，默认处理当前页及前后各 5 页，最多 11 页。滚动后自动补译新范围，范围内完成后等待继续阅读。0 表示仅翻译当前页。</p>
+        <p class="hint">启用后，满足以下任意一项规则的网页会使用当前语言、翻译服务和显示模式自动翻译，并消耗对应服务的额度。手动恢复原文后，当前地址不会再次自动开启。</p>
+        <fieldset class="performance-group">
+          <legend>自动翻译站点</legend>
+          <ul id="autoTranslateSites" class="auto-site-list" aria-label="自动翻译站点列表"></ul>
+          <p id="autoTranslateSiteHelp" class="hint">example.com 包含子域名，*.example.com 仅匹配子域名，https://example.com/docs/* 可限定协议和路径。</p>
+          <p id="autoTranslateSiteStatus" class="hint" role="status"></p>
+        </fieldset>
       </section>
 
       <section>
@@ -94,6 +97,7 @@
           <div class="provider-toolbar">
             <div id="providerPicker" class="provider-picker">
               <button id="providerTrigger" class="provider-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                <span id="providerTriggerIcon" aria-hidden="true"></span>
                 <span id="providerTriggerLabel" class="provider-trigger-label"></span>
                 <span class="provider-chevron" aria-hidden="true"></span>
               </button>
@@ -105,9 +109,35 @@
         <div id="providerForm"></div>
       </section>
 
+      <section id="performanceSettings">
+        <h2>性能设置</h2>
+        <fieldset class="performance-group">
+          <legend>通用性能</legend>
+          <div class="grid">
+            <label>默认分块大小 <input id="chunkSize" type="number" min="200" max="4000" /></label>
+            <label>全局最大并发数 <input id="concurrency" type="number" min="1" max="8" /></label>
+          </div>
+        </fieldset>
+        <div id="providerPerformance"></div>
+        <fieldset id="pdfSettings" class="performance-group">
+          <legend>PDF 翻译范围</legend>
+          <div class="grid">
+            <label>翻译范围
+              <select id="pdfTranslationScope" aria-describedby="pdfTranslationScopeDescription">
+                <option value="nearby">附近页面</option>
+                <option value="unlimited">无限制（整份 PDF）</option>
+              </select>
+            </label>
+            <label id="pdfTranslationPageRadiusField">前后各翻译页数
+              <input id="pdfTranslationPageRadius" type="number" min="0" max="1000" step="1" aria-describedby="pdfTranslationScopeDescription" />
+            </label>
+          </div>
+          <p id="pdfTranslationScopeDescription" class="field-description">开始翻译后，默认处理当前页及前后各 5 页，最多 11 页。滚动后自动补译新范围，范围内完成后等待继续阅读。0 表示仅翻译当前页。</p>
+        </fieldset>
+      </section>
+
       <footer>
         <button id="save" type="button">保存</button>
-        <button id="test" type="button" class="secondary">测试服务</button>
         <button id="restore" type="button" class="secondary">恢复默认设置</button>
         <p id="status" role="status"></p>
       </footer>
@@ -135,6 +165,24 @@
         <div class="dialog-actions">
           <button type="submit">添加</button>
         </div>
+      </form>
+    </dialog>
+    <dialog id="modelDialog" class="provider-dialog">
+      <form id="modelDialogForm">
+        <header class="dialog-header">
+          <h2>管理模型</h2>
+          <button id="cancelModel" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </header>
+        <label>操作
+          <select id="modelAction">
+            <option value="add">添加模型</option>
+            <option value="edit">修改当前模型</option>
+          </select>
+        </label>
+        <label>模型名称 <input id="customModelName" type="text" required placeholder="填写服务商提供的模型名称" /></label>
+        <p class="hint">添加后会选中该模型；当前服务的地址和密钥会保留。</p>
+        <p id="modelStatus" class="hint" role="status"></p>
+        <div class="dialog-actions"><button type="submit">保存并使用</button></div>
       </form>
     </dialog>
   </body>

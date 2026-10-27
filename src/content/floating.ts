@@ -8,6 +8,8 @@ import type {
 } from "../shared/types";
 import { sendRuntimeRequest } from "./runtime";
 import { localProviderNotice } from "../shared/local-notice";
+import { enhanceProviderSelect } from "../shared/provider-picker";
+import { normalizeAutoTranslation, setAutoTranslationEnabled } from "../shared/auto-translation";
 import {
   clearTranslationsIn,
   collectParagraphTextSegments,
@@ -346,9 +348,7 @@ function createMenu(): void {
     <label class="wupage-menu-field">
       <span class="wupage-field-label">翻译服务</span>
       <span class="wupage-provider-select">
-        <select data-role="provider" aria-label="翻译服务"></select>
-        <span class="wupage-provider-value" data-role="provider-value" aria-hidden="true"></span>
-        <span class="wupage-language-chevron" aria-hidden="true"></span>
+        <select data-role="provider" aria-label="翻译服务" hidden></select>
       </span>
     </label>
     <div class="wupage-menu-section">
@@ -365,6 +365,10 @@ function createMenu(): void {
       <p data-role="translation-status" role="status" aria-live="polite" aria-atomic="true">点击悬浮球即可翻译全文</p>
       <button type="button" data-action="retranslate" hidden>重新翻译</button>
     </div>
+    <button type="button" data-action="auto-translation" class="wupage-switch-row" aria-pressed="false">
+      <span>自动翻译</span>
+      <span class="wupage-switch" aria-hidden="true"><span></span></span>
+    </button>
     <button type="button" data-action="paragraph-mode" class="wupage-switch-row">
       <span>段落模式</span>
       <span class="wupage-switch" aria-hidden="true"><span></span></span>
@@ -377,6 +381,7 @@ function createMenu(): void {
   `;
   menu.addEventListener("pointerenter", cancelMenuClose);
   menu.addEventListener("pointerleave", scheduleMenuClose);
+  menu.addEventListener("wupage-provider-close", scheduleMenuClose);
   menu.addEventListener("focusin", cancelMenuClose);
   menu.addEventListener("focusout", scheduleMenuClose);
   menu.addEventListener("change", (event) => {
@@ -387,7 +392,6 @@ function createMenu(): void {
       void updateLanguages(menu).catch(showMenuError);
     }
     if (target.dataset.role === "provider") {
-      syncSelectValue(target);
       void updateFloatingSettings(menu, { activeProviderId: target.value }).catch(showMenuError);
     }
   });
@@ -406,6 +410,7 @@ function createMenu(): void {
       return;
     }
     if (action === "paragraph-mode") void setParagraphMode(!paragraphMode).catch(showMenuError);
+    if (action === "auto-translation") void toggleAutoTranslation(menu).catch(showMenuError);
     if (action === "page-toggle") void togglePageTranslationFromFloating();
     if (action === "retranslate") void togglePageTranslationFromFloating(true);
     if (action === "display-mode") {
@@ -492,6 +497,7 @@ function scheduleMenuClose(): void {
   menuCloseTimer = window.setTimeout(() => {
     menuCloseTimer = undefined;
     const menu = document.getElementById("wupage-floating-menu");
+    if (menu?.matches(":hover")) return;
     // Keep native language/provider pickers and keyboard navigation usable.
     if (menu?.contains(document.activeElement) &&
       (document.activeElement instanceof HTMLSelectElement || document.activeElement?.matches(":focus-visible"))) return;
@@ -552,6 +558,8 @@ async function updateMenuState(menu: HTMLElement): Promise<void> {
 }
 
 function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void {
+  const automatic = menu.querySelector<HTMLButtonElement>("[data-action='auto-translation']");
+  if (automatic) automatic.setAttribute("aria-pressed", String(settings.autoTranslation?.enabled === true));
   let localNotice = menu.querySelector<HTMLElement>("[data-role='local-notice']");
   const noticeText = localProviderNotice(settings);
   if (!localNotice && noticeText) {
@@ -589,7 +597,7 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
       delete providerSelect.dataset.options;
     }
     providerSelect.value = settings.activeProviderId;
-    syncSelectValue(providerSelect);
+    enhanceProviderSelect(providerSelect, settings.providers);
   }
   menu.querySelectorAll<HTMLButtonElement>("[data-action='display-mode']").forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.mode === settings.translationDisplayMode));
@@ -1155,6 +1163,17 @@ async function updateLanguages(menu: HTMLElement): Promise<void> {
   const targetLang = menu.querySelector<HTMLSelectElement>("[data-role='target-lang']")?.value;
   if (!sourceLang || !targetLang) return;
   await updateFloatingSettings(menu, { sourceLang, targetLang });
+}
+
+async function toggleAutoTranslation(menu: HTMLElement): Promise<void> {
+  const button = menu.querySelector<HTMLButtonElement>("[data-action='auto-translation']")!;
+  if (button.disabled) return;
+  button.disabled = true; button.setAttribute("aria-busy", "true");
+  try {
+    const settings = await getSettings();
+    const rules = normalizeAutoTranslation(settings.autoTranslation);
+    await updateFloatingSettings(menu, { autoTranslation: setAutoTranslationEnabled(rules, !rules.enabled) });
+  } finally { button.disabled = false; button.setAttribute("aria-busy", "false"); }
 }
 
 function updateFloatingSettings(menu: HTMLElement, patch: Partial<ExtensionSettings>): Promise<void> {

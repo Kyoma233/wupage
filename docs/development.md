@@ -76,6 +76,13 @@ npm run build
 
 ### 网页翻译回归验证
 
+- 自动翻译由 `src/shared/auto-translation.ts` 归一化并匹配站点规则，`src/content/auto-translation.ts` 在前台 HTML 页面触发现有渐进翻译。语言检测仅使用本机浏览器接口；路由、配置与手动停止会使过期检测结果失效。回归覆盖域名边界、通配与路径、旧设置默认关闭、动态内容、手动停止和单页导航。
+- `npm run test:auto`：构建后加载实际扩展，使用本地网页和模拟翻译服务验证规则保存、窄屏、自动触发、手动恢复原文、单页导航、目标语言跳过和异步加载的正文。报告保存在 `.npm-cache/auto-translation/`。
+- 六个预置在线翻译服务通过 `serviceMode` 区分 `free`（默认）和 `api`，凭据保存在对应配置的 `api` 中。免费分支不读取或发送这些凭据；切换方式会保留已有配置。旧版内置 Azure / Google Cloud 配置在规范化设置时迁移至对应服务商，存在不同凭据时保留独立配置。火山 API 在后台通过 Web Crypto 生成 V4 签名；腾讯 API 使用 TokenHub 的翻译模型。
+- `npm run test:services`：构建后加载实际扩展，以模拟网络响应验证六家服务的免费/API 切换、设置保存、凭据保留、实际请求分支和窄屏布局，不访问真实付费服务。支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`，报告保存在 `.npm-cache/service-modes/`。
+- 服务额度资料保存在 `src/shared/provider-usage.ts`，设置页在切换服务、使用方式、模型或地址时更新。维护数值时须核对所链接的官方资料并更新核对日期；匿名接口与云 API 分开，官方未公开的数字不以经验值代替。`src/options/provider-usage.ts` 单独显示插件调度设置，不能将 RPM、QPS 和并发混用。说明仅使用随扩展打包的资料，不查询账号余额或额外请求第三方接口。
+- 另外预置 `tencent-transmart`、`yandex-web-translate`、`volcengine-web-translate` 与 `mymemory`。免费模式下，腾讯使用批量请求，Yandex 与火山逐项处理以保留段落对应关系；MyMemory 在本机检测源语言，并按 500 UTF-8 字节分段，保留空白、Unicode 字符、占位符及实体字面量。回归测试覆盖错误响应、额度限制、取消和旧配置兼容。
+- 服务图标随扩展内联打包，弹窗、悬浮菜单和 PDF 共用带图标的服务选择器；设置页复用同一图标映射。图标来源与 MIT 许可保存在 `public/licenses/lobe-icons.txt`，显示时无需访问外部图片服务器。
 - `npm run test:page`：先运行 `npm run build`，再使用可选的 Playwright 与 Chromium 加载真实 MV3 扩展。支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER` 环境变量。
 - 使用本地页面和本地模拟翻译服务，覆盖两种窗口宽度、三种显示模式、代码占位符损坏恢复、隐藏内容与草稿排除、Ctrl 点击段落翻译、清除还原，以及动态原文更新后的迟到响应。切换显示模式不得新增翻译请求。
 - 同时检查 `dist/content.js` 能作为普通脚本解析，防止公共工具被拆成模块导入而导致内容脚本无法加载。报告保存在 `.npm-cache/page-translation/report.json`。

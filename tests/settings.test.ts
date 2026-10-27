@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { normalizeSettings } from "../src/shared/settings";
 
 describe("normalizeSettings", () => {
+  it("keeps custom model choices without losing provider credentials", () => {
+    const settings = normalizeSettings({
+      activeProviderId: "deepseek",
+      providers: [{ type: "deepseek", id: "deepseek", label: "DeepSeek",
+        baseURL: "https://example.com/v1", apiKey: "saved-key", model: "custom-model", systemPrompt: "Translate",
+        customModels: [" custom-model ", "", "custom-model", false, null, "another-model"] }]
+    });
+    expect(settings.providers.find((provider) => provider.id === "deepseek")).toMatchObject({
+      model: "custom-model", customModels: ["custom-model", "another-model"], apiKey: "saved-key"
+    });
+  });
   it("uses defaults for invalid input", () => {
     const settings = normalizeSettings({
       targetLang: "",
@@ -11,7 +22,7 @@ describe("normalizeSettings", () => {
     });
 
     expect(settings.targetLang).toBe("zh-CN");
-    expect(settings.activeProviderId).toBe("google-web-translate");
+    expect(settings.activeProviderId).toBe("microsoft-web-translate");
     expect(settings.chunkSize).toBe(4000);
     expect(settings.concurrency).toBe(1);
     expect(settings.translateCodeComments).toBe(true);
@@ -73,9 +84,12 @@ describe("normalizeSettings", () => {
         concurrency: 3
       });
     expect(settings.providers.map((provider) => provider.id)).toEqual([
+      "microsoft-web-translate",
       "google-web-translate",
-      "microsoft-translator",
-      "google-cloud-translation",
+      "tencent-transmart",
+      "yandex-web-translate",
+      "volcengine-web-translate",
+      "mymemory",
       "openai-compatible",
       "deepseek",
       "zhipu-glm",
@@ -109,6 +123,28 @@ describe("normalizeSettings", () => {
     expect(settings.providers.find((provider) => provider.id === "zhipu-glm")?.chunkSize)
       .toBeUndefined();
   });
+
+  it.each(["google-web-translate", "microsoft-translator", "deepseek"])(
+    "migrates legacy Azure credentials while preserving the selected service %s", (activeProviderId) => {
+      const settings = normalizeSettings({
+        activeProviderId,
+        providers: [{
+          type: "microsoft-translator", id: "microsoft-translator", label: "My Azure",
+          endpoint: "https://api.cognitive.microsofttranslator.com", apiKey: "saved-key", region: "eastasia"
+        }]
+      });
+      expect(settings.activeProviderId).toBe(activeProviderId === "microsoft-translator" ? "microsoft-web-translate" : activeProviderId);
+      expect(settings.providers.find((entry) => entry.id === "microsoft-web-translate"))
+        .toMatchObject({ type: "microsoft-web-translate", enabled: true });
+      for (const id of ["tencent-transmart", "yandex-web-translate", "volcengine-web-translate", "mymemory"]) {
+        expect(settings.providers.find(entry => entry.id === id)).toMatchObject({ type: id, enabled: true });
+      }
+      expect(settings.providers.find((entry) => entry.id === "microsoft-web-translate"))
+        .toMatchObject({ serviceMode: activeProviderId === "microsoft-translator" ? "api" : "free",
+          api: { apiKey: "saved-key", region: "eastasia" } });
+      expect(settings.providers.some(entry => entry.id === "microsoft-translator")).toBe(false);
+    }
+  );
 
   it.each([
     ["deepseek-v4-flash", "deepseek-flash"],
@@ -161,7 +197,7 @@ describe("normalizeSettings", () => {
     expect(settings.providers.find((provider) => provider.id === "openai-compatible")?.enabled)
       .toBe(false);
     expect(settings.providers.some((provider) => provider.id === "custom-anthropic-test")).toBe(true);
-    expect(settings.activeProviderId).toBe("google-web-translate");
+    expect(settings.activeProviderId).toBe("microsoft-web-translate");
   });
 
   it("keeps at least one provider enabled", () => {
@@ -172,7 +208,7 @@ describe("normalizeSettings", () => {
     const settings = normalizeSettings({ providers: disabledProviders });
 
     expect(settings.providers.filter((provider) => provider.enabled !== false)).toHaveLength(1);
-    expect(settings.activeProviderId).toBe("google-web-translate");
+    expect(settings.activeProviderId).toBe("microsoft-web-translate");
   });
 
   it.each([true, false, undefined, "true"])("defaults Ollama compatibility on and preserves explicit opt-out: %s", (value) => {

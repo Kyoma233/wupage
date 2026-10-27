@@ -1,5 +1,7 @@
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from "./defaults";
 import { isLlmProvider } from "./performance";
+import { normalizeAutoTranslation } from "./auto-translation";
+import { normalizeServiceConfig, supportsServiceMode } from "./translation-service";
 import type { ExtensionSettings, ProviderConfig } from "./types";
 
 export async function getSettings(): Promise<ExtensionSettings> {
@@ -18,9 +20,10 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
   const storedProviders = Array.isArray(input.providers)
     ? input.providers.filter(isProviderConfig)
     : [];
+  const requestedId = migrateTranslationApis(storedProviders, readString(input.activeProviderId, DEFAULT_SETTINGS.activeProviderId));
   const providers = mergeProviders(storedProviders, chunkSize, concurrency);
   ensureEnabledProvider(providers);
-  const requestedProviderId = readString(input.activeProviderId, DEFAULT_SETTINGS.activeProviderId);
+  const requestedProviderId = requestedId;
   const activeProviderId =
     providers.find(
       (provider) => provider.id === requestedProviderId && provider.enabled !== false
@@ -32,6 +35,7 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
     ...DEFAULT_SETTINGS,
     ...input,
     providers,
+    autoTranslation: normalizeAutoTranslation(input.autoTranslation),
     targetLang: readString(input.targetLang, DEFAULT_SETTINGS.targetLang),
     sourceLang: readString(input.sourceLang, DEFAULT_SETTINGS.sourceLang),
     activeProviderId,
@@ -57,6 +61,40 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
       ? input.translationDisplayMode
       : DEFAULT_SETTINGS.translationDisplayMode
   };
+}
+
+function migrateTranslationApis(providers: ProviderConfig[], activeId: string): string {
+  const aliases = [
+    { old: "microsoft-translator", current: "microsoft-web-translate" },
+    { old: "google-cloud-translation", current: "google-web-translate" }
+  ];
+  for (const alias of aliases) {
+    const index = providers.findIndex(provider => provider.id === alias.old && provider.type === alias.old);
+    if (index < 0) continue;
+    const old = providers[index];
+    if (old.type !== "microsoft-translator" && old.type !== "google-cloud-translation") continue;
+    const current = providers.find(provider => provider.id === alias.current)
+      ?? DEFAULT_SETTINGS.providers.find(provider => provider.id === alias.current)!;
+    if (!supportsServiceMode(current)) continue;
+    // Retain separately configured subscriptions when merging would lose either credential.
+    if (current.api?.apiKey && (current.api.apiKey !== old.apiKey || old.type === "microsoft-translator"
+      && ((current.api.endpoint || "https://api.cognitive.microsofttranslator.com") !== old.endpoint
+        || (current.api.region || "") !== old.region))) continue;
+    providers.splice(index, 1);
+    const configured = old.apiKey || old.id === activeId || old.type === "microsoft-translator"
+      && (old.region || old.endpoint !== "https://api.cognitive.microsofttranslator.com");
+    const api = configured ? {
+      ...current.api, apiKey: old.apiKey,
+      ...(old.type === "microsoft-translator" ? { endpoint: old.endpoint, region: old.region } : {})
+    } : current.api;
+    const replacement = { ...current, api,
+      ...(old.id === activeId ? { serviceMode: "api" as const, enabled: old.enabled, label: old.label } : {}) };
+    const currentIndex = providers.findIndex(provider => provider.id === alias.current);
+    if (currentIndex < 0) providers.push(replacement);
+    else providers[currentIndex] = replacement;
+    if (old.id === activeId) activeId = alias.current;
+  }
+  return activeId;
 }
 
 function isTranslationDisplayMode(value: unknown): value is ExtensionSettings["translationDisplayMode"] {
@@ -85,6 +123,25 @@ function normalizeProvider(
   globalChunkSize: number,
   globalConcurrency: number
 ): ProviderConfig {
+  if (supportsServiceMode(provider)) provider = normalizeServiceConfig(provider);
+  const previousLabels: Record<string, string[]> = {
+    "microsoft-web-translate": ["Microsoft 免费翻译", "Microsoft Translator API（Azure）", "Microsoft Translator"],
+    "google-web-translate": ["Google Web Translate", "Google Cloud Translation"],
+    "tencent-transmart": ["腾讯 TranSmart"], "yandex-web-translate": ["Yandex 免费翻译"], "volcengine-web-translate": ["火山免费翻译"]
+  };
+  if (previousLabels[provider.id]?.includes(provider.label)) {
+    provider = { ...provider, label: DEFAULT_SETTINGS.providers.find(entry => entry.id === provider.id)!.label };
+  }
+  if (provider.customModels !== undefined) {
+    provider = { ...provider, customModels: Array.isArray(provider.customModels)
+      ? [...new Set(provider.customModels.filter((model): model is string => typeof model === "string")
+        .map((model) => model.trim()).filter(Boolean))]
+      : [] };
+  }
+  if (provider.type === "microsoft-translator" && provider.id === "microsoft-translator"
+    && provider.label === "Microsoft Translator") {
+    provider = { ...provider, label: "Microsoft Translator API（Azure）" };
+  }
   if (provider.type === "deepseek"
     && (provider.model === "deepseek-v4-flash" || provider.model === "deepseek-v4-flash-vision-exp")) {
     provider = { ...provider, model: "deepseek-flash" };
@@ -140,7 +197,10 @@ function isProviderConfig(value: unknown): value is ProviderConfig {
   ) return false;
   if (value.chunkSize !== undefined && typeof value.chunkSize !== "number") return false;
   if (value.concurrency !== undefined && typeof value.concurrency !== "number") return false;
-  if (value.type === "google-web-translate" || value.type === "firefox-local") {
+  if (value.type === "google-web-translate" || value.type === "microsoft-web-translate"
+    || value.type === "tencent-transmart" || value.type === "yandex-web-translate"
+    || value.type === "volcengine-web-translate" || value.type === "mymemory"
+    || value.type === "firefox-local") {
     return ["id", "label"].every((key) => typeof value[key] === "string");
   }
 

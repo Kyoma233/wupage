@@ -53,6 +53,23 @@ describe("floating language controls", () => {
       expect(sourceValue.textContent).toBe("English");
       expect(targetValue.textContent).toBe("한국어");
     });
+    const provider = query<HTMLSelectElement>("[data-role='provider']");
+    provider.value = "zhipu-glm";
+    provider.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(stored.activeProviderId).toBe("zhipu-glm");
+      expect(document.querySelector(".wupage-provider-trigger [data-provider-icon='zhipu-color']")).not.toBeNull();
+      expect(document.querySelector(".wupage-provider-trigger .wupage-provider-name")?.textContent).toBe("Zhipu GLM");
+    });
+    expect(document.querySelector("[data-role='provider-value']")).toBeNull();
+    const automatic = query<HTMLButtonElement>("[data-action='auto-translation']");
+    automatic.click();
+    await vi.waitFor(() => expect(automatic.getAttribute("aria-pressed")).toBe("true"));
+    expect(stored.autoTranslation).toMatchObject({ enabled: true, nonTargetLanguage: true });
+    await vi.waitFor(() => expect(automatic.disabled).toBe(false));
+    automatic.click();
+    await vi.waitFor(() => expect(automatic.getAttribute("aria-pressed")).toBe("false"));
+    expect(stored.autoTranslation?.nonTargetLanguage).toBe(true);
   });
 
   it("isolates the floating control from host positioning and button typography", async () => {

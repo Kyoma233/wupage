@@ -25,7 +25,10 @@ function setupHelp(action: HTMLButtonElement, contents: HTMLElement[]): () => vo
   trigger.setAttribute("aria-describedby", "ocrHelpPanel");
   const panel = document.createElement("div");
   panel.id = "ocrHelpPanel"; panel.className = "ocr-help-panel"; panel.setAttribute("role", "tooltip"); panel.hidden = true;
-  panel.append(...contents); help.append(trigger, panel); action.before(help);
+  panel.append(...contents); help.append(trigger, panel);
+  const slot = action.closest(".image-feature-row")?.querySelector(".ocr-help-slot");
+  if (slot) slot.append(help);
+  else action.before(help);
   const position = () => {
     if (panel.hidden) return;
     const anchor = trigger.getBoundingClientRect();

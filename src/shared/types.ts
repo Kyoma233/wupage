@@ -1,6 +1,11 @@
 export type ProviderType =
   | "firefox-local"
+  | "microsoft-web-translate"
   | "google-web-translate"
+  | "tencent-transmart"
+  | "yandex-web-translate"
+  | "volcengine-web-translate"
+  | "mymemory"
   | "microsoft-translator"
   | "google-cloud-translation"
   | "openai-compatible"
@@ -18,10 +23,47 @@ export interface ProviderBaseConfig {
   performanceMode?: "inherit" | "custom";
   chunkSize?: number;
   concurrency?: number;
+  /** Additional model IDs saved for this provider. */
+  customModels?: string[];
 }
 
-export interface GoogleWebTranslateConfig extends ProviderBaseConfig {
+export interface TranslationApiOptions {
+  apiKey?: string;
+  endpoint?: string;
+  region?: string;
+  folderId?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  model?: string;
+}
+
+export interface DualServiceConfig extends ProviderBaseConfig {
+  serviceMode?: "free" | "api";
+  api?: TranslationApiOptions;
+}
+
+export interface GoogleWebTranslateConfig extends DualServiceConfig {
   type: "google-web-translate";
+}
+
+export interface MicrosoftWebTranslateConfig extends DualServiceConfig {
+  type: "microsoft-web-translate";
+}
+
+export interface TencentTransmartConfig extends DualServiceConfig {
+  type: "tencent-transmart";
+}
+
+export interface YandexWebTranslateConfig extends DualServiceConfig {
+  type: "yandex-web-translate";
+}
+
+export interface VolcengineWebTranslateConfig extends DualServiceConfig {
+  type: "volcengine-web-translate";
+}
+
+export interface MyMemoryConfig extends DualServiceConfig {
+  type: "mymemory";
 }
 
 export interface FirefoxLocalConfig extends ProviderBaseConfig {
@@ -85,7 +127,12 @@ export interface HttpTemplateConfig extends ProviderBaseConfig {
 
 export type ProviderConfig =
   | FirefoxLocalConfig
+  | MicrosoftWebTranslateConfig
   | GoogleWebTranslateConfig
+  | TencentTransmartConfig
+  | YandexWebTranslateConfig
+  | VolcengineWebTranslateConfig
+  | MyMemoryConfig
   | MicrosoftTranslatorConfig
   | GoogleCloudTranslationConfig
   | OpenAICompatibleConfig
@@ -94,7 +141,13 @@ export type ProviderConfig =
   | ZhipuGlmConfig
   | HttpTemplateConfig;
 
+export type DualServiceProviderConfig = Extract<ProviderConfig, DualServiceConfig & {
+  type: "microsoft-web-translate" | "google-web-translate" | "tencent-transmart"
+    | "yandex-web-translate" | "volcengine-web-translate" | "mymemory";
+}>;
+
 export interface ExtensionSettings {
+  autoTranslation?: AutoTranslationSettings;
   targetLang: string;
   sourceLang: string;
   activeProviderId: string;
@@ -108,6 +161,20 @@ export interface ExtensionSettings {
   translateCodeComments: boolean;
   translationDisplayMode: TranslationDisplayMode;
   providers: ProviderConfig[];
+}
+
+export interface AutoTranslationSite {
+  id: string;
+  pattern: string;
+  enabled: boolean;
+}
+
+export interface AutoTranslationSettings {
+  enabled: boolean;
+  nonTargetLanguage: boolean;
+  presetSites: string[];
+  customSites: AutoTranslationSite[];
+  removedPresetSites?: string[];
 }
 
 export interface TranslateBatchRequest {

@@ -461,35 +461,8 @@ export function injectContentStyles(): void {
       font: inherit;
     }
 
-    #wupage-floating-menu select[data-role="provider"] {
-      all: initial;
-      display: block;
-      box-sizing: border-box;
-      width: 100% !important;
-      min-width: 0 !important;
-      max-width: none !important;
-      height: 36px !important;
-      margin: 0 !important;
-      padding: 0 28px !important;
-      border: 1px solid #d5dfdc;
-      border-radius: 8px;
-      color: transparent !important;
-      background: #f5f8f7;
-      font: inherit;
-      appearance: none !important;
-      box-shadow: none !important;
-      transform: none !important;
-      cursor: pointer;
-    }
-
-    #wupage-floating-menu select[data-role="provider"] option {
-      color: #26343a;
-      background: #ffffff;
-    }
-
-    #wupage-floating-menu select[data-role="provider"]:focus-visible {
-      outline: 2px solid #69b8ac;
-      outline-offset: 2px;
+    #wupage-floating-menu select[data-role="provider"][hidden] {
+      display: none !important;
     }
 
     #wupage-floating-menu .wupage-display-modes {
@@ -615,8 +588,7 @@ export function injectContentStyles(): void {
       font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
-    #wupage-floating-menu .wupage-language-value,
-    #wupage-floating-menu .wupage-provider-value {
+    #wupage-floating-menu .wupage-language-value {
       all: initial;
       position: absolute !important;
       z-index: 1;
@@ -638,10 +610,6 @@ export function injectContentStyles(): void {
       white-space: nowrap !important;
       pointer-events: none;
       transform: none !important;
-    }
-
-    #wupage-floating-menu .wupage-provider-value {
-      padding: 0 28px !important;
     }
 
     #wupage-floating-menu .wupage-language-select select:hover,
@@ -717,6 +685,8 @@ export function injectContentStyles(): void {
       justify-content: space-between;
       gap: 10px;
     }
+
+    #wupage-floating-menu .wupage-switch-row[aria-busy="true"] { opacity: 1; cursor: wait; }
 
     #wupage-floating-menu .wupage-switch {
       position: relative;

@@ -25,6 +25,7 @@ describe("options provider controls", () => {
     const sendMessage = vi.fn(async (request: RuntimeRequest): Promise<RuntimeResponse> => {
       if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "installed", total: 100, downloaded: 100 } };
       if (request.type === "GET_SETTINGS") return { ok: true, data: stored };
+      if (request.type === "TEST_PROVIDER") return { ok: true, data: { translation: "你好" } };
       if (request.type === "SAVE_SETTINGS") {
         stored = normalizeSettings(request.settings);
         return { ok: true, data: null };
@@ -49,8 +50,15 @@ describe("options provider controls", () => {
     await import("../src/options/index");
     await vi.waitFor(() => {
       expect(document.querySelector("#providerTriggerLabel")?.textContent)
-        .toBe("Google Web Translate");
+        .toBe("Microsoft 翻译");
     });
+    expect(document.querySelector("[data-field='apiKey']")).toBeNull();
+    expect(document.querySelector("#providerTriggerIcon [data-provider-icon='microsoft-color']")).not.toBeNull();
+    expect(document.querySelector("#providerForm")?.textContent).toContain("无需注册或填写 API Key");
+    expect(document.querySelector("#performanceSettings #pdfTranslationScope")).not.toBeNull();
+    expect(document.querySelector("#performanceSettings #chunkSize")).not.toBeNull();
+    expect(document.querySelector("#providerForm [data-field='inheritPerformance']")).toBeNull();
+    expect(document.querySelector("footer #test")).toBeNull();
     expect(query<HTMLSelectElement>("#sourceLang").value).toBe("auto");
     expect(query<HTMLSelectElement>("#sourceLang").selectedOptions[0]?.textContent)
       .toBe("自动检测");
@@ -99,7 +107,7 @@ describe("options provider controls", () => {
     query<HTMLInputElement>("[data-field='concurrency']").value = "2";
     click("#save");
     await vi.waitFor(() => {
-      expect(stored.providers.find((entry) => entry.id === "google-web-translate"))
+      expect(stored.providers.find((entry) => entry.id === "microsoft-web-translate"))
         .toMatchObject({ performanceMode: "custom", chunkSize: 800, concurrency: 2 });
     });
 
@@ -108,6 +116,8 @@ describe("options provider controls", () => {
     expect(document.querySelectorAll(".provider-enable")).toHaveLength(DEFAULT_SETTINGS.providers.length);
     expect(document.querySelectorAll(".provider-delete")).toHaveLength(0);
     expect(document.querySelectorAll(".provider-option-type")).toHaveLength(0);
+    expect(document.querySelectorAll(".provider-option .wupage-provider-icon"))
+      .toHaveLength(DEFAULT_SETTINGS.providers.length);
 
     click("[data-action='select'][data-provider-id='deepseek']");
     await vi.waitFor(() => {
@@ -126,12 +136,47 @@ describe("options provider controls", () => {
           .toMatchObject({ model });
       });
     }
+    const providerCount = stored.providers.length;
+    query<HTMLInputElement>("[data-field='apiKey']").value = "saved-model-test-key";
+    query<HTMLInputElement>("[data-field='baseURL']").value = "https://example.com/v1";
+    expect(query<HTMLButtonElement>("#test").closest(".model-toolbar")).not.toBeNull();
+    for (const model of ["custom-model-one", "custom-model-two"]) {
+      click("[data-action='manage-model']");
+      expect(query<HTMLDialogElement>("#modelDialog").hasAttribute("open")).toBe(true);
+      query<HTMLInputElement>("#customModelName").value = model;
+      query<HTMLFormElement>("#modelDialogForm").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => {
+        expect(query<HTMLDialogElement>("#modelDialog").hasAttribute("open")).toBe(false);
+        expect(query<HTMLSelectElement>("[data-field='model']").value).toBe(model);
+      });
+    }
+    click("[data-action='manage-model']");
+    query<HTMLSelectElement>("#modelAction").value = "edit";
+    query<HTMLSelectElement>("#modelAction").dispatchEvent(new Event("change"));
+    expect(query<HTMLInputElement>("#customModelName").value).toBe("custom-model-two");
+    query<HTMLInputElement>("#customModelName").value = "custom-model-two-edited";
+    query<HTMLFormElement>("#modelDialogForm").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(query<HTMLDialogElement>("#modelDialog").hasAttribute("open")).toBe(false));
+    expect(stored.providers).toHaveLength(providerCount);
+    expect(stored.providers.find((entry) => entry.id === "deepseek")).toMatchObject({
+      model: "custom-model-two-edited", customModels: ["custom-model-one", "custom-model-two-edited"],
+      apiKey: "saved-model-test-key", baseURL: "https://example.com/v1"
+    });
+    click("#test");
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toBe("测试通过：你好"));
+    expect(document.querySelector(".model-field [data-role='provider-test-status']")?.textContent).toBe("测试通过：你好");
+    expect(sendMessage).toHaveBeenCalledWith({ type: "TEST_PROVIDER", providerId: "deepseek" });
     click("#providerTrigger");
     click("[data-action='select'][data-provider-id='google-web-translate']");
     await vi.waitFor(() => {
       expect(document.querySelector("#providerTriggerLabel")?.textContent)
-        .toBe("Google Web Translate");
+        .toBe("Google 翻译");
     });
+    click("#providerTrigger");
+    click("[data-action='select'][data-provider-id='deepseek']");
+    await vi.waitFor(() => expect(query<HTMLSelectElement>("[data-field='model']").value).toBe("custom-model-two-edited"));
+    expect(Array.from(query<HTMLSelectElement>("[data-field='model']").options, (option) => option.value))
+      .toEqual(["deepseek-flash", "deepseek-v4-pro", "custom-model-one", "custom-model-two-edited"]);
 
     click("#addProvider");
     expect(document.querySelector("#providerDialog")?.hasAttribute("open")).toBe(true);
@@ -156,7 +201,7 @@ describe("options provider controls", () => {
     expect(document.querySelectorAll(".provider-delete")).toHaveLength(1);
     const customId = stored.activeProviderId;
     click(`[data-action="toggle"][data-provider-id="${customId}"]`);
-    await vi.waitFor(() => expect(stored.activeProviderId).toBe("google-web-translate"));
+    await vi.waitFor(() => expect(stored.activeProviderId).toBe("microsoft-web-translate"));
     expect(stored.providers.find((provider) => provider.id === customId)?.enabled).toBe(false);
 
     click(`[data-action="delete"][data-provider-id="${customId}"]`);

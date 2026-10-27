@@ -52,7 +52,7 @@ and are initiated by an explicit user action. No remote scripts are executed.
 Reviewer testing
 1. Install dist-firefox/manifest.json temporarily using about:debugging in
    Firefox 154 or later. Use a new test profile if desired.
-2. The default Google Web Translate provider needs no account or API key.
+2. The default Microsoft browser translation provider needs no account or API key.
    Open an ordinary English web page and use the toolbar popup or floating ball.
 3. The settings page offers custom HTTP, OpenAI/Anthropic-compatible and other
    API providers. Credentials are supplied by the user to their chosen provider.

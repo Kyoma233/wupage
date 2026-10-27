@@ -44,7 +44,15 @@ section {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
   gap: 14px;
+}
+
+.grid > label > :is(input, select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
 }
 
 label {
@@ -63,6 +71,59 @@ label {
   color: #77848a;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.display-mode-field {
+  max-width: 430px;
+}
+
+.provider-usage { min-width: 0; padding: 12px 14px; border: 1px solid #dce5e1; border-radius: 7px; background: #f7faf8; color: #26343a; font-size: 12px; line-height: 1.6; }
+.provider-usage-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.provider-usage h3 { min-width: 0; margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.provider-usage time { color: #64746c; font-size: 11px; }
+.provider-usage-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; margin: 10px 0; }
+.provider-usage-details div { min-width: 0; }
+.provider-usage dt { color: #64746c; font-size: 11px; }
+.provider-usage dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.provider-usage p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.provider-usage-note { color: #64746c; }
+.provider-usage-sources a { color: #116466; text-underline-offset: 2px; }
+.provider-usage-sources a:focus-visible { outline: 2px solid #116466; outline-offset: 2px; }
+.provider-usage .provider-usage-scheduling { padding-top: 8px; margin-top: 9px; border-top: 1px solid #dce5e1; color: #116466; }
+@media (max-width: 600px) {
+  .provider-usage { padding: 10px; }
+  .provider-usage-details { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+
+.auto-translation-controls { display: flex; align-items: center; gap: 20px; min-width: 0; padding: 8px 10px; border: 1px solid #d7dedb; border-radius: 6px; background: #f7faf8; }
+.auto-translation-controls .auto-translation-master { flex: 0 0 auto; gap: 12px; min-height: 26px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.auto-language-option { display: flex; align-items: center; gap: 7px; min-width: 0; margin-left: auto; color: #172026; line-height: 1.4; cursor: pointer; }
+.auto-language-option[hidden] { display: none; }
+.auto-language-option input { flex: 0 0 auto; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: #116466; cursor: pointer; }
+.auto-site-list { min-width: 0; margin: 0; padding: 0; list-style: none; border: 1px solid #d7dedb; border-radius: 6px; overflow: hidden; }
+.auto-site-list > li + li { border-top: 1px solid #e4eae7; }
+.auto-site-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 30px; align-items: center; gap: 10px; min-height: 46px; box-sizing: border-box; padding: 6px 10px; }
+.auto-site-row:has(.auto-site-enabled:checked) { background: #f4f8f6; }
+.auto-site-row .auto-site-enabled { width: 16px; height: 16px; min-height: 0; padding: 0; accent-color: #116466; }
+.auto-site-editor { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 12px; align-items: center; min-width: 0; }
+.auto-site-editor small { color: #526068; font-size: 12px; overflow-wrap: anywhere; }
+.auto-site-editor .auto-site-pattern { box-sizing: border-box; width: 100%; min-width: 0; min-height: 34px; padding: 0 8px; background: transparent; border-color: transparent; }
+.auto-site-pattern:hover { border-color: #c9d1cf; }
+.auto-site-pattern:focus { border-color: #116466; outline: 2px solid #11646633; }
+.auto-site-pattern[aria-invalid="true"] { border-color: #ad3737; }
+.auto-site-row button.auto-site-remove { width: 30px; height: 30px; min-height: 30px; padding: 0; color: #526068; background: transparent; font-size: 22px; font-weight: 400; }
+.auto-site-row button.auto-site-remove:hover { color: #a62626; background: #fff0f0; }
+.auto-site-add-row button { display: block; width: 100%; min-height: 36px; padding: 0; border-radius: 0; color: #116466; background: #f5f8f7; font-size: 24px; font-weight: 400; }
+.auto-site-add-row button:hover { background: #e4eeeb; }
+.auto-site-empty { padding: 12px; color: #77848a; font-size: 12px; }
+#autoTranslateSiteStatus:empty { display: none; }
+
+@media (max-width: 600px) {
+  .auto-translation-controls { gap: 10px; }
+  .auto-translation-controls .auto-translation-master { gap: 8px; }
+  .auto-site-editor { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .auto-site-editor .auto-site-pattern { grid-row: 1; }
+  .auto-site-editor small { grid-row: 2; padding-left: 8px; font-size: 11px; }
 }
 
 #pdfTranslationPageRadiusField[hidden] {
@@ -199,6 +260,7 @@ label {
 }
 
 .provider-trigger-label {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -241,6 +303,7 @@ label {
   min-height: 34px;
   display: flex;
   align-items: center;
+  gap: 9px;
   padding: 0 8px;
   color: #172026;
   background: transparent;
@@ -260,6 +323,7 @@ label {
 }
 
 .provider-option-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -398,20 +462,68 @@ label {
   background: #ffffff;
 }
 
-.provider-performance {
+.provider-performance,
+.performance-group {
   display: grid;
   gap: 12px;
-  margin: 16px 0 0;
+  min-width: 0;
+  margin: 0;
   padding: 14px;
   border: 1px solid #d7dedb;
   border-radius: 8px;
 }
 
-.provider-performance legend {
+.provider-performance legend,
+.performance-group legend {
   padding: 0 6px;
   color: #26343a;
   font-size: 13px;
   font-weight: 600;
+}
+
+.performance-group .field-description {
+  margin: 0;
+}
+
+#providerForm {
+  display: grid;
+  gap: 14px;
+}
+
+.model-field {
+  display: grid;
+  gap: 6px;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.model-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px auto;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 560px);
+}
+
+.model-toolbar select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+}
+
+.add-model {
+  width: 38px;
+  height: 38px;
+  background: #e8edeb;
+}
+
+.model-toolbar #test {
+  white-space: nowrap;
+}
+
+[data-role="provider-test-status"][hidden] {
+  display: none;
 }
 
 .performance-inherit {
@@ -494,6 +606,17 @@ button.secondary {
   display: grid;
   gap: 14px;
   padding: 18px;
+}
+
+.provider-dialog label {
+  min-width: 0;
+}
+
+.provider-dialog input,
+.provider-dialog select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
 }
 
 .dialog-header,

@@ -167,7 +167,13 @@ try {
   await page.mouse.move(20, 20);
   await ball.hover();
   await menu.waitFor({state:'visible'});
-  await page.locator('[data-role="provider"]').selectOption('http-template');
+  await page.locator('.wupage-provider-trigger').click();
+  await page.locator('.wupage-provider-choice[data-value="http-template"]').click();
+  assert.equal(await menu.locator('[data-role="provider-value"]').count(), 0, 'legacy provider text must not overlap the icon picker');
+  const providerIconBox = await menu.locator('.wupage-provider-trigger .wupage-provider-icon').boundingBox();
+  const providerNameBox = await menu.locator('.wupage-provider-trigger .wupage-provider-name').boundingBox();
+  assert.ok(providerIconBox?.width > 0 && providerNameBox?.x >= providerIconBox.x + providerIconBox.width,
+    'the provider icon must be visible to the left of its name');
   await page.mouse.move(20, 20);
   await menu.waitFor({state:'hidden', timeout:2000});
   await ball.hover();
