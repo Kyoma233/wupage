@@ -162,6 +162,9 @@ def check_existing(versions, version):
         parts = tuple(int(part) for part in value.split('.'))
         return parts + (0,) * (4 - len(parts))
 
+    if any(item.get('channel') != 'listed' for item in versions):
+        raise RuntimeError('AMO listed version history contains an unexpected channel. Check the Developer Hub.')
+
     for existing in versions:
         if existing['version'] == version:
             status = existing.get('file', {}).get('status')
@@ -199,9 +202,23 @@ def publish_package(client, package_path, source_path, tag, addon_id, commit, dr
 
     addon_path = f'/addons/addon/{quote(addon_id, safe="")}/'
     addon = client.request('GET', addon_path)
-    if addon.get('guid') != addon_id or addon.get('is_disabled') or 'listed' not in addon.get('channels', []):
+    print('AMO listing: ' + json.dumps({
+        name: addon.get(name) for name in ('guid', 'status', 'channels', 'is_disabled')
+    }, ensure_ascii=False))
+    channels = addon.get('channels')
+    # AMO can omit channels on a nominated listing, even for its author.
+    # The authenticated all_without_unlisted history below confirms the channel.
+    if addon.get('guid') != addon_id or addon.get('is_disabled') or (channels is not None and 'listed' not in channels):
         raise RuntimeError('AMO_ADDON_ID must identify the existing, enabled listed add-on owned by this account.')
-    existing = check_existing(client.versions(addon_path), tag[1:])
+    versions = client.versions(addon_path)
+    print('AMO version check: ' + json.dumps({
+        'listed_versions': len(versions),
+        'target': [{
+            'version': item.get('version'), 'channel': item.get('channel'),
+            'status': item.get('file', {}).get('status'), 'source_attached': bool(item.get('source')),
+        } for item in versions if item.get('version') == tag[1:]],
+    }, ensure_ascii=False))
+    existing = check_existing(versions, tag[1:])
     if existing:
         print(f'{tag} already exists on AMO with source attached. No upload or changes were made.')
         return 'already-exists'

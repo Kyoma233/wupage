@@ -143,6 +143,18 @@ class PublishFirefoxTests(unittest.TestCase):
                 self.assertEqual(self.publish(self.client), 'already-exists')
                 self.assertEqual(send.call_count, 2)
 
+    def test_nominated_listing_without_channels_uses_authenticated_version_history(self):
+        addon = {'guid': ADDON_ID, 'status': 'nominated', 'is_disabled': False}
+        with self.api([addon, {'results': [version('1.2.0', 'unreviewed')], 'next': None}]) as send:
+            self.assertEqual(self.publish(self.client, dry_run=True), 'already-exists')
+        self.assertTrue(all(call.args[0].get_method() == 'GET' for call in send.call_args_list))
+
+    def test_unexpected_version_channel_never_starts_upload(self):
+        with self.api(self.preflight([{**version('1.2.0'), 'channel': 'unlisted'}])) as send:
+            with self.assertRaisesRegex(RuntimeError, 'unexpected channel'):
+                self.publish(self.client)
+        self.assertEqual(send.call_count, 2)
+
     def test_unsafe_existing_states_never_start_an_upload(self):
         cases = [
             [version('1.2.0', 'disabled')], [version('1.2.0', source=None)],
