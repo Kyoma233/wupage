@@ -34,7 +34,7 @@ export async function translateWithSettings(
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
   const cacheProviderId = settings.cacheEnabled
-    ? `${providerId}.${await sha256(JSON.stringify({ version: 3, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
+    ? `${providerId}.${await sha256(JSON.stringify({ version: 4, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
       ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
     : providerId;
@@ -344,7 +344,20 @@ async function translateProviderTexts(
   const translations = contextualResult.length === 1
     ? parseContextualTranslation(contextualResult[0], texts.length)
     : null;
-  if (translations) return translations;
+  if (translations) {
+    // A localized page can mix target-language controls with foreign prose.
+    // Detecting the combined text can leave that prose untranslated. Retry only
+    // unchanged items through the provider's ordinary per-item language detection.
+    if (!request.sourceLang || request.sourceLang === "auto") {
+      const unchanged = texts.flatMap((text, index) => translations[index].trim() === text.trim() ? [index] : []);
+      if (unchanged.length) {
+        const retried = await provider.translateBatch({ ...request, texts: unchanged.map(index => texts[index]) });
+        assertTranslationResponse(retried, unchanged.length);
+        unchanged.forEach((index, position) => { translations[index] = retried[position]; });
+      }
+    }
+    return translations;
+  }
 
   // Some machine-translation endpoints rewrite unusual delimiters. Fall back
   // to their ordinary batch mode rather than failing the whole page.

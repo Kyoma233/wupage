@@ -25,6 +25,31 @@ describe("contextual machine translation", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([undefined, "auto"])("retries unchanged mixed-language items separately with source language %s", async (sourceLang) => {
+    const translations = new Map([
+      ["游戏版本", "游戏版本"],
+      ["A lightweight library for game extensions.", "用于游戏扩展的轻量级库。"],
+      ["Download the latest release.", "下载最新版本。"]
+    ]);
+    const fetchMock = vi.fn(async (url: string) => {
+      const source = new URL(url).searchParams.get("q")!;
+      const translated = source.includes("WUPAGESEGMENT")
+        ? "⟪WUPAGESEGMENT0⟫\n游戏版本\n⟪WUPAGESEGMENT1⟫\nA lightweight library for game extensions.\n⟪WUPAGESEGMENT2⟫\n下载最新版本。"
+        : translations.get(source);
+      expect(translated).toBeDefined();
+      return { ok: true, json: async () => [[[translated, source, null, null]]] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const settings = createLlmSettings("google-mixed", 1);
+    settings.providers = [{ id: "google-mixed", type: "google-web-translate", label: "Google" }];
+    await expect(translateWithSettings(settings, {
+      texts: [...translations.keys()], sourceLang, targetLang: "zh-CN", context: "Page title: 模组列表"
+    })).resolves.toEqual({ translations: [...translations.values()], cached: 0 });
+    const sources = fetchMock.mock.calls.map(([url]) => new URL(url).searchParams.get("q"));
+    expect(sources).toHaveLength(3);
+    expect(sources.slice(1)).toEqual(["游戏版本", "A lightweight library for game extensions."]);
+  });
+
   it("translates adjacent page items together so ambiguous terms share context", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       const source = new URL(url).searchParams.get("q") ?? "";

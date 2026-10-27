@@ -11,6 +11,7 @@
     "dev": "vite build --watch",
     "test": "vitest run",
     "test:page": "node scripts/test-page-translation.mjs",
+    "test:cards": "node scripts/test-card-layout.mjs",
     "test:auto": "node scripts/test-auto-translation.mjs",
     "test:floating": "node scripts/test-floating-interactions.mjs",
     "test:settings": "node scripts/test-settings-initialization.mjs",

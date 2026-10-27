@@ -86,6 +86,7 @@ npm run build
 - `npm run test:page`：先运行 `npm run build`，再使用可选的 Playwright 与 Chromium 加载真实 MV3 扩展。支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER` 环境变量。
 - 使用本地页面和本地模拟翻译服务，覆盖两种窗口宽度、三种显示模式、代码占位符损坏恢复、隐藏内容与草稿排除、Ctrl 点击段落翻译、清除还原，以及动态原文更新后的迟到响应。切换显示模式不得新增翻译请求。
 - 同时检查 `dist/content.js` 能作为普通脚本解析，防止公共工具被拆成模块导入而导致内容脚本无法加载。报告保存在 `.npm-cache/page-translation/report.json`。
+- `npm run test:cards`：使用实际扩展和本地模拟服务，检查中英文界面下的混合语言卡片。覆盖 Flex/Grid 字段分离、标题字号与字重、作者链接、两种窗口宽度、三种显示模式和清除还原；匿名服务将整批判为目标语言时，未翻译项应独立重试。报告保存在 `.npm-cache/card-layout/`。
 - `npm run test:floating`：加载实际扩展，覆盖真实指针的 500 毫秒悬停延迟、离开取消、拖动与位置保存、悬浮球和弹窗的翻译中停止、迟到响应、原译文切换与缓存复用、动态列表、状态同步、缓存清理、失败重试、Debug、设置入口、键盘操作和小窗口。报告保存在 `.npm-cache/floating-interactions/`。
 - `npm run test:settings`：延迟返回设置，逐帧检查弹窗和设置页重开时的图片翻译开关；保存为开启或关闭的状态都不得闪现错误位置或启动动画。报告保存在 `.npm-cache/settings-initialization/`。
 - 网页回归还包含明暗背景、现代 CSS 颜色和网页强制文字颜色下的实际颜色检查，切换原色、双色和替换模式时不得新增翻译请求。

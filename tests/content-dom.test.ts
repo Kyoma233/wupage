@@ -43,6 +43,32 @@ describe("content DOM translation extraction", () => {
     expect(collectTextSegments().map(({ text }) => text)).toEqual(["Please review the attached contract."]);
   });
 
+  it.each(["flex", "inline-flex", "grid", "inline-grid"])("keeps card fields separate in a %s layout", (display) => {
+    document.body.innerHTML = `<article><div id="fields"><span id="title">A modular library for game extensions</span>
+      <span id="author">by <a href="/user/developer">developer</a></span></div>
+      <div id="summary">Lightweight tools for creating and sharing extensions.</div></article>`;
+    stubLayout("", { style: element => ({ display: element.id === "fields" ? display : "block" }) });
+    const original = document.querySelector("article")!.innerHTML;
+    const authorLink = document.querySelector("#author a");
+    const segments = collectTextSegments();
+    expect(segments.map(({ text }) => text)).toEqual([
+      "A modular library for game extensions", "by", "developer", "Lightweight tools for creating and sharing extensions."
+    ]);
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: `译文：${text}` })), "replace");
+    expect(document.querySelector("#fields > .wupage-translation")).toBeNull();
+    expect(document.querySelector("#title .wupage-translation")?.textContent).toBe("译文：A modular library for game extensions");
+    expect(document.querySelector("#author > .wupage-translation")?.textContent).toBe("译文：by");
+    expect(authorLink?.querySelector(".wupage-translation")?.textContent).toBe("译文：developer");
+    expect(authorLink?.getAttribute("href")).toBe("/user/developer");
+    for (const mode of ["bilingual", "bilingual-accent", "replace"] as const) {
+      setTranslationDisplayMode(mode);
+      expect(document.querySelector("#fields > .wupage-translation")).toBeNull();
+      expect(document.querySelector("#author a")).toBe(authorLink);
+    }
+    clearTranslations();
+    expect(document.querySelector("article")!.innerHTML).toBe(original);
+  });
+
   it("protects inline code inside div-based prose", () => {
     document.body.innerHTML = `<article><div>Call <code>fetch()</code> before continuing.</div></article>`;
     stubLayout();
