@@ -199,6 +199,9 @@ def publish_package(client, package_path, source_path, tag, addon_id, commit, dr
 
     addon_path = f'/addons/addon/{quote(addon_id, safe="")}/'
     addon = client.request('GET', addon_path)
+    print('AMO listing: ' + json.dumps({
+        name: addon.get(name) for name in ('guid', 'status', 'channels', 'is_disabled')
+    }, ensure_ascii=False))
     if addon.get('guid') != addon_id or addon.get('is_disabled') or 'listed' not in addon.get('channels', []):
         raise RuntimeError('AMO_ADDON_ID must identify the existing, enabled listed add-on owned by this account.')
     existing = check_existing(client.versions(addon_path), tag[1:])
