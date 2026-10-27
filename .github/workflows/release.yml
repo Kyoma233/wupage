@@ -64,8 +64,8 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Test Edge publishing script
-        run: python3 -m unittest discover -s tests -p 'test_publish_edge.py'
+      - name: Test store publishing scripts
+        run: python3 -m unittest discover -s tests -p 'test_publish_*.py'
 
       - name: Build extension
         run: npm run build
@@ -192,3 +192,18 @@ jobs:
     secrets:
       EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
       EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+
+  publish-firefox:
+    name: Submit release to Firefox Add-ons
+    needs: release
+    # Both stores run independently once the GitHub Release exists.
+    if: ${{ always() && needs.release.outputs.published == 'true' && vars.AMO_ADDON_ID != '' && !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/publish-firefox.yml
+    permissions:
+      contents: read
+    with:
+      tag: ${{ github.ref_name }}
+      dry_run: false
+    secrets:
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}

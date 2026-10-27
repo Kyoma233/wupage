@@ -1,0 +1,27 @@
+name: Check store publishing
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/publish-*.py'
+      - 'tests/test_publish_*.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/publish-*.py'
+      - 'tests/test_publish_*.py'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test publishing without store credentials or live requests
+        run: python3 -B -m unittest discover -s tests -p 'test_publish_*.py'

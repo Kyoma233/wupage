@@ -11,7 +11,7 @@
 
 ## 自动化实现位置
 
-以下为现有实现的操作背景，具体行为以 .github/workflows/release.yml、.github/workflows/publish-edge.yml 和 scripts/publish-edge.py 为准。
+以下为现有实现的操作背景，具体行为以 .github/workflows/release.yml、.github/workflows/publish-edge.yml、.github/workflows/publish-firefox.yml 及对应的 scripts/publish-*.py 为准。
 
 ## 发布流程
 
@@ -41,7 +41,28 @@ git push origin main v1.1.0
 
 `npm run build:firefox` 从共享 Manifest 生成 `dist-firefox/`，最低 Firefox 154。`browser_specific_settings.gecko.id` 固定为 `wupage@mr-wuliu.github.io`，正式提交 AMO 后不得随意变更。数据传输声明包含 `websiteContent` 和 `authenticationInfo`，后者对应用户配置后发送给服务商的 API 凭据；功能的数据处理行为变化时须同步检查声明。
 
-标签发布会同时生成 `wupage-<version>-firefox.zip`、`wupage-<version>-firefox-source.zip` 和 SHA-256 文件。源码包由 `scripts/package-firefox-source.py` 从指定 Git 提交生成，并附英文构建与审核说明；不包含依赖目录、测试资料目录和凭据。Firefox ZIP 未经 Mozilla 签名，不等同于可长期安装的商店版本。尚未配置 AMO 自动提交或签名；首次通过 AMO 开发者中心提交发布，后续接入时不得将任何 AMO 凭据写入仓库。
+标签发布会同时生成 `wupage-<version>-firefox.zip`、`wupage-<version>-firefox-source.zip` 和 SHA-256 文件。源码包由 `scripts/package-firefox-source.py` 从指定 Git 提交生成，并附英文构建与审核说明；不包含依赖目录、测试资料目录和凭据。GitHub Release 中的 Firefox ZIP 未经 Mozilla 签名，不等同于可长期安装的商店版本；正式安装和更新通过 AMO 分发。
+
+### 自动同步到 Firefox Add-ons（AMO）
+
+首次提交仍在 [AMO 开发者中心](https://addons.mozilla.org/developers/) 完成，首版通过后由自动流程提交后续正式版。使用 Mozilla 官方 [Add-on API v5](https://mozilla.github.io/addons-server/topics/api/addons.html) 和 [JWT 认证](https://mozilla.github.io/addons-server/topics/api/auth.html)，不创建新的商店条目，不修改简介、截图或许可证。
+
+在 [AMO API 凭据页面](https://addons.mozilla.org/developers/addon/api/key/) 创建个人 API 凭据，在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Variable | `AMO_ADDON_ID` | `wupage@mr-wuliu.github.io`，与 Firefox Manifest 的 Gecko ID 一致；配置后启用正式版自动提交 |
+| Secret | `AMO_JWT_ISSUER` | AMO 显示的 JWT issuer / API key |
+| Secret | `AMO_JWT_SECRET` | AMO 显示的 JWT secret / API secret |
+
+- 正式版 GitHub Release 创建后，Firefox 工作流与 Edge 提交、网站同步分别执行；某一个失败不阻止其他流程。未配置 `AMO_ADDON_ID` 时跳过自动提交；配置后缺少密钥会明确报错。预发布版本不提交商店。
+- 工作流直接下载已有 Release 的 Firefox ZIP、源码 ZIP 及其校验文件，不重新构建或重新打包。检查 SHA-256、Manifest 的版本和 Gecko ID、源码内三个版本及根包版本，以及 `SOURCE_REVISION.txt` 与标签实际 Git 提交的一致性。
+- 提交前通过认证 API 检查现有条目及全部公开渠道版本（包括待审版本）。同版本已公开或待审且有源码时直接跳过，不覆盖文件或修改审核；其他待审版本、已拒绝/禁用版本、缺源码或版本倒退会要求人工处理。首次审核尚未通过时不会提交新版本。
+- 上传 ZIP 后等待 AMO 自动校验通过，再在同一次创建版本请求中上传配套源码和英文审核备注。更新沿用上一版许可证，商店元数据仍在 AMO 后台维护。密钥始终只放在 GitHub Secrets，不得写入仓库、日志或审核备注。
+- 在 GitHub **Actions → Publish to Firefox Add-ons → Run workflow** 输入已有正式版标签可单独试跑或重试。`dry_run` 默认勾选：只验证发布产物；如果两项密钥都存在，还会检查账号权限和现有版本，全程不上传、不修改 AMO。未配置密钥时试跑成功仅表示本地产物检查通过。
+- 确认后取消 `dry_run` 才会实际提交；推送正式版标签触发的自动调用使用实际提交模式。提交请求超时后，先在 AMO 后台确认是否受理；脚本不会自动重发写入请求。重跑会先检查同版本是否已经存在。
+- 工作流成功表示已提交或同版本已存在，不代表审核通过。Mozilla 审核、签名和商店上线仍需等待；工作流不会长时间等待人工审核，也不会从签名文件重新生成 Release 的未签名 ZIP。
+- 本地验证发布脚本：`python -B -m unittest discover -s tests -p 'test_publish_*.py'`。校验使用模拟网络，不会接触真实商店。
 
 ### 自动同步到 Microsoft Edge Add-ons
 
