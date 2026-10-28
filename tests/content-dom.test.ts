@@ -185,7 +185,8 @@ describe("content DOM translation extraction", () => {
   it.each(["bilingual", "bilingual-accent"] as const)("keeps authored multiline text inside its column in %s mode", (mode) => {
     document.body.innerHTML = `<div id="profile"><span id="source">すべての魔法少女たちを救うことを願い<br>「円環の理」と呼ばれる神にも等しい<br>存在となった少女。<br></span></div>`;
     stubLayout("rgb(34, 34, 34)", { style: (element) => element.id === "source"
-      ? { display: "inline-block", whiteSpace: "nowrap" } : {} });
+      ? { display: "inline-block", whiteSpace: "nowrap", fontFamily: "Georgia, serif", fontSize: "17px" }
+      : { fontFamily: "Arial, sans-serif", fontSize: "14px" } });
     const source = document.querySelector<HTMLElement>("#source")!;
     const original = source.innerHTML;
     const breaks = [...source.querySelectorAll("br")];
@@ -195,10 +196,13 @@ describe("content DOM translation extraction", () => {
     renderTranslationPlaceholders(segments);
     expect(source.nextElementSibling?.getAttribute("data-wupage-container")).toBe("authored-lines");
     renderTranslations([{ id: segments[0].id, text: "她希望拯救所有魔法少女，成为被称作圆环之理的存在。" }], mode);
-    const output = source.nextElementSibling!;
+    const output = source.nextElementSibling as HTMLElement;
     expect(output.getAttribute("data-wupage-mode")).toBe("block");
     expect(output.getAttribute("data-wupage-display-mode")).toBe(mode);
     expect(output.parentElement?.id).toBe("profile");
+    // Container rules own the look of authored lines, so no inline typography.
+    expect(output.style.getPropertyValue("font-family")).toBe("");
+    expect(output.style.getPropertyValue("font-size")).toBe("");
     expect(source.querySelector(".wupage-translation")).toBeNull();
     expect(source.innerHTML).toBe(original);
     clearTranslations();
@@ -619,6 +623,51 @@ describe("content DOM translation extraction", () => {
     expect(segments.map((segment) => segment.text)).toEqual([
       "If this mentions any specific language, keep it together."
     ]);
+  });
+
+  it("keeps a paragraph's serif typography on translations rendered after it", () => {
+    document.body.innerHTML = `<article><section id="body">
+      <p id="plain">Anthropic is redefining the total addressable market.</p>
+      <p id="linked">In a filing Monday, the company <a href="https://example.com/filing">disclosed a range</a> of estimates.</p>
+    </section></article>`;
+    stubLayout("", { style: (element) => element.matches("p")
+      ? { fontFamily: "Exchange, Georgia, serif", fontWeight: "400", fontSize: "18px" }
+      : { fontFamily: "Retina, Arial, sans-serif", fontWeight: "500", fontSize: "17px" } });
+
+    const segments = collectTextSegments();
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: `译文：${text}` })));
+
+    // A link paragraph has several text runs, so it is grouped and its
+    // translation is rendered as a sibling of the paragraph.
+    const translation = document.querySelector("#linked")!.nextElementSibling as HTMLElement;
+    expect(translation.matches(".wupage-translation")).toBe(true);
+    expect(translation.style.getPropertyValue("font-family")).toBe("Exchange, Georgia, serif");
+    expect(translation.style.getPropertyValue("font-weight")).toBe("400");
+    // The stub resolves the mode CSS literally, so the re-based 0.95em ratio
+    // lands on the paragraph's own 18px instead of the container's 17px.
+    expect(translation.style.getPropertyValue("font-size")).toBe("18px");
+
+    // A single-run paragraph keeps its translation inside the paragraph and
+    // inherits the serif font without any inline override.
+    const plain = document.querySelector<HTMLElement>("#plain .wupage-translation");
+    expect(plain).not.toBeNull();
+    expect(plain!.style.getPropertyValue("font-family")).toBe("");
+    expect(plain!.style.getPropertyValue("font-size")).toBe("");
+  });
+
+  it("does not force typography when the translation renders inside its block", () => {
+    document.body.innerHTML = `
+      <p id="linked">In a filing Monday, the company <a href="https://example.com/filing">disclosed a range</a> of estimates.</p>
+    `;
+    stubLayout("", { style: () => ({ fontFamily: "Exchange, Georgia, serif", fontSize: "18px" }) });
+
+    const segments = collectTextSegments();
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: `译文：${text}` })), "replace");
+
+    const translation = document.querySelector<HTMLElement>("#linked .wupage-translation");
+    expect(translation).not.toBeNull();
+    expect(translation!.style.getPropertyValue("font-family")).toBe("");
+    expect(translation!.style.getPropertyValue("font-size")).toBe("");
   });
 
   it("renders ordinary list prose consistently with and without paragraph wrappers", () => {
