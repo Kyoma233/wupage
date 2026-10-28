@@ -66,7 +66,7 @@ try {
         const visible=frames.filter(frame=>frame.visible);
         assert.ok(visible.length>0);
         assert.ok(visible.every(frame=>frame.enabled===enabled && !frame.loading),`${pageName}: stale switch state was painted`);
-        assert.ok(visible.every(frame=>frame.background===(enabled?'rgb(17, 100, 102)':'rgb(213, 221, 224)')),`${pageName}: startup color transition was painted`);
+        assert.ok(visible.every(frame=>frame.background===(enabled?'rgb(17, 100, 102)':'rgb(215, 222, 219)')),`${pageName}: startup color transition was painted`);
         assert.ok(visible.every(frame=>enabled?frame.transform==='matrix(1, 0, 0, 1, 8, 0)':frame.transform==='none'),`${pageName}: startup knob transition was painted`);
         assert.deepEqual(errors,[]);
         if(enabled&&opening===1)await page.locator('.image-feature-row').screenshot({path:path.join(output,`${pageName}-enabled.png`)});

@@ -3,6 +3,8 @@ import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from "../shared/languages";
 import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import type { ExtensionSettings } from "../shared/types";
 import "./styles.css";
+import "../shared/appearance.css";
+import { setupAppearance } from "../shared/appearance-runtime";
 import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control";
 import { getExtensionDetailsUrl, isLikelyPdfUrl, openPdfWorkspaceInNewTab } from "../pdf/launch";
 import { localProviderNotice } from "../shared/local-notice";
@@ -66,6 +68,7 @@ async function init(): Promise<void> {
     });
   });
   settings = await sendRuntimeMessage<ExtensionSettings>({ type: "GET_SETTINGS" });
+  setupAppearance(settings.appearance);
   renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
   renderLanguageOptions(targetLang, settings.targetLang, TARGET_LANGUAGES);
   provider.innerHTML = settings.providers
@@ -142,7 +145,9 @@ async function init(): Promise<void> {
   });
   const settingsChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string): void => {
     const incoming = changes[SETTINGS_KEY]?.newValue as ExtensionSettings | undefined;
-    if (area !== "local" || !incoming || autoTranslationButton.getAttribute("aria-busy") === "true") return;
+    if (area !== "local" || !incoming) return;
+    settings.appearance = incoming.appearance;
+    if (autoTranslationButton.getAttribute("aria-busy") === "true") return;
     settings.autoTranslation = normalizeAutoTranslation(incoming.autoTranslation);
     updateAutoTranslationButton();
   };

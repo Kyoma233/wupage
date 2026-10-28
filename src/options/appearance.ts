@@ -1,0 +1,194 @@
+import { applyColorScheme, BUILT_IN_SCHEMES, COLOR_FIELDS, COLOR_GROUPS, DEFAULT_APPEARANCE, getColorScheme,
+  isHexColor, normalizeAppearance, type AppearanceMode, type AppearanceSettings, type AppearanceTone } from "../shared/appearance";
+import { setupAppearance } from "../shared/appearance-runtime";
+import { mapTranslationTextColor } from "../shared/translation-colors";
+import "./appearance.css";
+
+export function setupAppearanceControls(root: HTMLElement): {
+  render: (value: unknown) => void;
+  read: () => AppearanceSettings;
+} {
+  const query = <T extends HTMLElement>(selector: string): T => root.querySelector<T>(selector)!;
+  const select = query<HTMLSelectElement>("#appearanceScheme");
+  const colors = query<HTMLElement>("#appearanceColors");
+  const name = query<HTMLInputElement>("#appearanceSchemeName");
+  const status = query<HTMLElement>("#appearanceStatus");
+  const duplicate = query<HTMLButtonElement>("#duplicateScheme");
+  let draft = normalizeAppearance(undefined);
+  let tone: AppearanceTone = "light";
+  let initialized = false;
+  const theme = setupAppearance(draft, { live: false });
+  const selected = () => getColorScheme(draft, tone);
+  const custom = () => draft.customSchemes.find(scheme => scheme.id === selected().id);
+
+  function paint(): void {
+    theme.update(draft);
+    const scheme = selected();
+    const preview = query<HTMLElement>("#appearancePreview");
+    applyColorScheme(preview, scheme);
+    preview.style.colorScheme = tone;
+    query<HTMLElement>("#appearancePreviewTone").textContent = tone === "light" ? "浅色" : "深色";
+    const palette = { light: scheme.colors["translation-light"], dark: scheme.colors["translation-dark"] };
+    query<HTMLElement>(".appearance-preview-translation-light").style.color = mapTranslationTextColor("rgb(39, 49, 58)", "rgb(255, 255, 255)", palette)!;
+    query<HTMLElement>(".appearance-preview-translation-dark").style.color = mapTranslationTextColor("rgb(231, 239, 236)", "rgb(23, 32, 38)", palette)!;
+  }
+
+  function renderEditor(): void {
+    select.replaceChildren();
+    for (const [label, schemes] of [["内置方案", BUILT_IN_SCHEMES], ["自定义方案", draft.customSchemes]] as const) {
+      const group = document.createElement("optgroup");
+      group.label = label;
+      for (const scheme of schemes.filter(scheme => scheme.tone === tone)) {
+        const option = document.createElement("option");
+        option.value = scheme.id; option.textContent = scheme.name;
+        group.append(option);
+      }
+      if (group.childElementCount) select.append(group);
+    }
+    const scheme = selected();
+    select.value = scheme.id;
+    const editable = Boolean(custom());
+    query<HTMLElement>("#customSchemeActions").hidden = !editable;
+    name.value = editable ? scheme.name : "";
+    name.removeAttribute("aria-invalid");
+    query<HTMLElement>("#appearanceSchemeHint").textContent = editable
+      ? "调整颜色后即时预览，点击页面底部「保存」后生效。"
+      : "内置方案可直接使用，复制后可编辑颜色和名称。";
+    duplicate.disabled = draft.customSchemes.length >= 32;
+    duplicate.title = duplicate.disabled ? "最多保存 32 个自定义方案" : "复制当前方案并编辑";
+    for (const button of root.querySelectorAll<HTMLButtonElement>("[data-appearance-tone]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.appearanceTone === tone));
+    }
+    const firstRender = !colors.childElementCount;
+    const expandedGroups = new Set(Array.from(colors.querySelectorAll<HTMLDetailsElement>("details[open]"), group => group.dataset.colorGroup));
+    colors.replaceChildren();
+    const groups = new Map<string, HTMLElement>();
+    for (const group of COLOR_GROUPS) {
+      const details = document.createElement("details");
+      details.className = "appearance-color-group";
+      details.dataset.colorGroup = group.id;
+      details.open = firstRender ? group.id === "floating" || group.id === "translation" : expandedGroups.has(group.id);
+      const summary = document.createElement("summary");
+      summary.textContent = group.label;
+      const swatches = document.createElement("span");
+      swatches.className = "appearance-group-swatches";
+      swatches.setAttribute("aria-hidden", "true");
+      for (const { key } of COLOR_FIELDS.filter(field => field.group === group.id).slice(0, 4)) {
+        const swatch = document.createElement("span");
+        swatch.style.background = scheme.colors[key]; swatches.append(swatch);
+      }
+      summary.append(swatches);
+      const description = document.createElement("p");
+      description.className = "field-description"; description.textContent = group.description;
+      const grid = document.createElement("div"); grid.className = "appearance-color-grid";
+      details.append(summary, description, grid); colors.append(details); groups.set(group.id, grid);
+    }
+    for (const { key, label, group } of COLOR_FIELDS) {
+      const row = document.createElement("div");
+      row.className = "appearance-color-row";
+      const text = document.createElement("label");
+      text.htmlFor = `appearance-color-${key}`; text.textContent = label;
+      const picker = document.createElement("input");
+      picker.type = "color"; picker.id = text.htmlFor; picker.value = scheme.colors[key];
+      picker.disabled = !editable;
+      const hex = document.createElement("input");
+      hex.type = "text"; hex.value = scheme.colors[key]; hex.maxLength = 7;
+      hex.spellcheck = false; hex.disabled = !editable;
+      hex.setAttribute("aria-label", `${label}十六进制颜色`);
+      hex.dataset.colorHex = key;
+      picker.addEventListener("input", () => {
+        const scheme = custom();
+        if (!scheme) return;
+        scheme.colors[key] = picker.value; hex.value = picker.value;
+        hex.removeAttribute("aria-invalid"); status.textContent = ""; paint();
+      });
+      hex.addEventListener("input", () => {
+        const value = hex.value.trim();
+        hex.setAttribute("aria-invalid", String(!isHexColor(value)));
+        const scheme = custom();
+        if (!scheme || !isHexColor(value)) return;
+        scheme.colors[key] = value.toLowerCase(); picker.value = value;
+        status.textContent = ""; paint();
+      });
+      row.append(text, picker, hex); groups.get(group)!.append(row);
+    }
+    paint();
+  }
+
+  root.addEventListener("change", event => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.name !== "appearanceMode") return;
+    draft.mode = event.target.value as AppearanceMode;
+    if (draft.mode !== "system") tone = draft.mode;
+    status.textContent = ""; renderEditor();
+  });
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-appearance-tone]")) {
+    button.addEventListener("click", () => { tone = button.dataset.appearanceTone as AppearanceTone; status.textContent = ""; renderEditor(); });
+  }
+  select.addEventListener("change", () => {
+    if (tone === "light") draft.lightSchemeId = select.value;
+    else draft.darkSchemeId = select.value;
+    status.textContent = ""; renderEditor();
+  });
+  duplicate.addEventListener("click", () => {
+    if (draft.customSchemes.length >= 32) return;
+    const source = selected();
+    const id = `custom-${crypto.randomUUID()}`;
+    const names = new Set([...BUILT_IN_SCHEMES, ...draft.customSchemes].map(scheme => scheme.name));
+    let newName = `${source.name.slice(0, 50)}（副本）`;
+    for (let n = 2; names.has(newName); n++) newName = `${source.name.slice(0, 50)}（副本 ${n}）`;
+    draft.customSchemes.push({ ...source, id, name: newName, colors: { ...source.colors } });
+    if (tone === "light") draft.lightSchemeId = id;
+    else draft.darkSchemeId = id;
+    status.textContent = "已复制，可调整颜色和名称。"; renderEditor(); name.focus(); name.select();
+  });
+  name.addEventListener("input", () => {
+    const scheme = custom();
+    if (!scheme) return;
+    const value = name.value.trim();
+    name.setAttribute("aria-invalid", String(!value));
+    if (value) {
+      scheme.name = value;
+      select.selectedOptions[0].textContent = value;
+    }
+  });
+  query<HTMLButtonElement>("#resetSchemeColors").addEventListener("click", () => {
+    const scheme = custom();
+    if (!scheme) return;
+    scheme.colors = { ...getColorScheme(DEFAULT_APPEARANCE, tone).colors };
+    status.textContent = "已重置为默认配色，保存后生效。"; renderEditor();
+  });
+  query<HTMLButtonElement>("#deleteScheme").addEventListener("click", () => {
+    const scheme = custom();
+    if (!scheme) return;
+    draft.customSchemes = draft.customSchemes.filter(entry => entry.id !== scheme.id);
+    if (tone === "light") draft.lightSchemeId = DEFAULT_APPEARANCE.lightSchemeId;
+    else draft.darkSchemeId = DEFAULT_APPEARANCE.darkSchemeId;
+    status.textContent = "已删除方案并切换到默认配色，保存后生效。"; renderEditor(); select.focus();
+  });
+
+  return {
+    render(value) {
+      draft = normalizeAppearance(value);
+      status.textContent = "";
+      if (!initialized) {
+        tone = draft.mode === "system"
+          ? typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+          : draft.mode;
+        initialized = true;
+      }
+      for (const radio of root.querySelectorAll<HTMLInputElement>("[name='appearanceMode']")) radio.checked = radio.value === draft.mode;
+      name.removeAttribute("aria-invalid");
+      renderEditor();
+    },
+    read() {
+      const invalid = root.querySelector<HTMLInputElement>("[aria-invalid='true']");
+      if (invalid) {
+        const group = invalid.closest("details");
+        if (group) group.open = true;
+        invalid.focus();
+        throw new Error(invalid === name ? "请填写配色方案名称。" : "请输入完整的十六进制颜色，例如 #116466。");
+      }
+      return normalizeAppearance(draft);
+    }
+  };
+}

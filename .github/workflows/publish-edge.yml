@@ -59,23 +59,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, re, subprocess
-          tag = os.environ['RELEASE_TAG']
-          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
-              raise SystemExit('Only stable v<major>.<minor>.<patch> releases can be submitted to the store.')
-          release = json.loads(subprocess.check_output([
-              'gh', 'release', 'view', tag, '--repo', os.environ['GITHUB_REPOSITORY'],
-              '--json', 'tagName,isDraft,isPrerelease',
-          ], text=True))
-          if release['tagName'] != tag or release['isDraft'] or release['isPrerelease']:
-              raise SystemExit('The requested GitHub Release must be published and stable.')
-          PY
           archive="wupage-${RELEASE_TAG#v}-edge.zip"
+          python3 scripts/publish-checksums.py "$RELEASE_TAG" "release/$archive"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$archive" \
-            --pattern "${archive}.sha256" \
             --dir release
           (cd release && sha256sum --check "${archive}.sha256")
 

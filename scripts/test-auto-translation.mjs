@@ -36,7 +36,7 @@ const errors=[];
 try{
   const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
   const extension=`chrome-extension://${new URL(worker.url()).host}`;
-  const options=await context.newPage();options.setDefaultTimeout(8000);await options.goto(`${extension}/options.html`);
+  const options=await context.newPage();options.setDefaultTimeout(8000);await options.goto(`${extension}/options.html#providerSettings`);
   await options.locator('#providerTriggerLabel').waitFor();
   await options.evaluate(async origin=>{
     const {data:settings}=await chrome.runtime.sendMessage({type:'GET_SETTINGS'});
@@ -48,6 +48,7 @@ try{
     await chrome.runtime.sendMessage({type:'SAVE_SETTINGS',settings});
   },origin);
   await options.reload();await options.locator('#providerForm [data-field="url"]').waitFor();
+  await options.locator('.settings-nav a[href="#autoTranslationSettings"]').click();
   assert.equal(await options.locator('#autoTranslateEnabled').isChecked(),false);
   assert.equal(await options.locator('#autoTranslateNonTargetOption').isVisible(),false);
   await options.locator('#autoTranslateEnabled').locator('..').click();

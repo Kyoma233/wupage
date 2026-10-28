@@ -196,8 +196,12 @@ describe("floating language controls", () => {
     expect(pageToggle.tagName).toBe("BUTTON");
     expect(pageToggle.textContent).toBe("显示原文");
     expect(style.display).toBe("flex");
-    expect(style.backgroundColor).toBe("rgb(17, 100, 102)");
-    expect(style.borderTopStyle).toBe("solid");
+    // jsdom does not resolve custom properties in background/border shorthands.
+    const rule = Array.from(query<HTMLStyleElement>("#wupage-translation-style").sheet!.cssRules)
+      .find((rule): rule is CSSStyleRule => "selectorText" in rule
+        && rule.selectorText === '#wupage-floating-menu button[data-action="page-toggle"]')!;
+    expect(rule.style.getPropertyValue("background")).toBe("var(--wp-accent, #116466)");
+    expect(rule.style.getPropertyValue("border")).toBe("1px solid var(--wp-accent, #116466)");
     expect(style.textAlign).toBe("center");
   });
 

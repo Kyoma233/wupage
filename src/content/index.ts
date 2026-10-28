@@ -1,5 +1,5 @@
 import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../shared/types";
-import { hasPageTranslations } from "./dom";
+import { hasPageTranslations, refreshTranslationColors } from "./dom";
 import {
   getFloatingBallEnabled,
   getParagraphMode,
@@ -14,6 +14,8 @@ import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
 import { SETTINGS_KEY } from "../shared/defaults";
 import { initAutoTranslation } from "./auto-translation";
+import { initSelectionTranslation } from "./selection-translation";
+import { setupAppearance } from "../shared/appearance-runtime";
 
 addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
   handleMessage(request)
@@ -28,9 +30,21 @@ addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
 });
 
 injectContentStyles();
+const appearance = setupAppearance(undefined, { extensionPage: false, onChange: scheme => {
+  refreshTranslationColors({ light: scheme.colors["translation-light"], dark: scheme.colors["translation-dark"] });
+} });
+// Ignore an older initial read if the user saves a newer appearance while it is pending.
+let appearanceRevision = 0;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[SETTINGS_KEY]) appearanceRevision++;
+});
+void sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" }).then(settings => {
+  if (!appearanceRevision) appearance.update(settings.appearance);
+}).catch(() => undefined);
 initFloatingBall();
 initImageTranslation();
 initAutoTranslation();
+initSelectionTranslation();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   const change = changes[SETTINGS_KEY];

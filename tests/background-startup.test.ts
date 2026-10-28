@@ -1,10 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SETTINGS_KEY } from "../src/shared/defaults";
+import { DEFAULT_SETTINGS, SETTINGS_KEY } from "../src/shared/defaults";
 import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../src/shared/types";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.resetModules(); });
 
 describe("background startup compatibility", () => {
+  it("allows explicitly testing a disabled service while rejecting ordinary translation requests to it", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    Object.assign(settings.providers.find(provider => provider.id === "openai-compatible")!, {
+      enabled: false, ollamaCompatibility: false, baseURL: "https://example.com/v1", apiKey: "test-key"
+    });
+    const stored: Record<string, unknown> = { [SETTINGS_KEY]: settings };
+    const addListener = vi.fn();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '["你好"]' } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("chrome", {
+      runtime: { onMessage: { addListener } },
+      storage: { local: { get: async () => stored, set: async (value: Record<string, unknown>) => { Object.assign(stored, value); } } }
+    });
+    await import("../src/background/index");
+    const receive = addListener.mock.calls[0][0];
+    const send = (request: RuntimeRequest): Promise<RuntimeResponse> => new Promise(resolve => receive(request, {}, resolve));
+    expect(await send({ type: "TEST_PROVIDER", providerId: "openai-compatible" })).toEqual({ ok: true, data: { translation: "你好" } });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(stored[SETTINGS_KEY]).toMatchObject({ activeProviderId: settings.activeProviderId });
+    expect((stored[SETTINGS_KEY] as ExtensionSettings).providers.find(provider => provider.id === "openai-compatible")!.enabled).toBe(false);
+    expect(await send({ type: "TRANSLATE_BATCH", providerId: "openai-compatible", texts: ["Hello"], targetLang: "zh-CN" }))
+      .toMatchObject({ ok: false, error: "Provider is disabled: openai-compatible" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it.each(["callback-only", "missing-menu", "throwing-menu"])("reads and saves settings with %s context menu APIs", async (mode) => {
     const stored: Record<string, unknown> = {};
     const addListener = vi.fn();

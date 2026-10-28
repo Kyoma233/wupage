@@ -39,11 +39,18 @@ describe("PDF launch options", () => {
     });
   });
 
-  it("keeps manually opened PDF workspaces idle", () => {
+  it("enables automatic translation by default, including in a blank workspace", () => {
     expect(getPdfLaunchOptions("chrome-extension://extension/pdf.html")).toEqual({
       url: null,
-      autoTranslate: false
+      autoTranslate: true
     });
+    expect(getPdfLaunchOptions("chrome-extension://extension/pdf.html?url=https%3A%2F%2Fexample.com%2Fpaper.pdf"))
+      .toEqual({ url: "https://example.com/paper.pdf", autoTranslate: true });
+  });
+
+  it("honors an explicit request to open without starting translation", () => {
+    expect(getPdfLaunchOptions("chrome-extension://extension/pdf.html?translate=0"))
+      .toEqual({ url: null, autoTranslate: false });
   });
 
   it("opens another blank workspace in a new tab without replacing the current document", async () => {

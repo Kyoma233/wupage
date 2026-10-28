@@ -1,4 +1,5 @@
 import type { ExtensionSettings, ImageTextRegion, TranslateImageResponse } from "../shared/types";
+import { SETTINGS_KEY } from "../shared/defaults";
 import { hasRuntimeContext, sendRuntimeRequest } from "./runtime";
 import { getImageRasterSize, renderImageTranslation } from "./image-rendering";
 
@@ -42,16 +43,19 @@ export function initImageTranslation(): void {
   initialized = true;
   let revision = 0;
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes["wupage.settings"]) return;
+    if (area !== "local" || !changes[SETTINGS_KEY]) return;
     revision += 1;
-    const settings = changes["wupage.settings"].newValue as ExtensionSettings | undefined;
-    const previous = changes["wupage.settings"].oldValue as ExtensionSettings | undefined;
-    if (previous && settings && previous.imageTranslationEnabled === settings.imageTranslationEnabled
-      && previous.sourceLang === settings.sourceLang && previous.targetLang === settings.targetLang
-      && previous.activeProviderId === settings.activeProviderId
-      && JSON.stringify(previous.providers) === JSON.stringify(settings.providers)) return;
-    // Clear old language/provider results as well as pending responses.
-    setImageTranslationEnabled(false);
+    const settings = changes[SETTINGS_KEY].newValue as ExtensionSettings | undefined;
+    const previous = changes[SETTINGS_KEY].oldValue as ExtensionSettings | undefined;
+    if (!previous || !settings || previous.imageTranslationEnabled !== settings.imageTranslationEnabled
+      || previous.sourceLang !== settings.sourceLang || previous.targetLang !== settings.targetLang
+      || previous.activeProviderId !== settings.activeProviderId
+      || JSON.stringify(previous.providers) !== JSON.stringify(settings.providers)) {
+      // Clear old language/provider results as well as pending responses.
+      setImageTranslationEnabled(false);
+    }
+    // Even an unrelated update supersedes the initial read. Apply its current
+    // switch value so initialization cannot remain disabled until a reload.
     setImageTranslationEnabled(settings?.imageTranslationEnabled === true);
   });
   const initialRevision = revision;
@@ -119,12 +123,12 @@ function createHost(): void {
   root.addEventListener("focusout", scheduleHover);
   const style = document.createElement("style");
   style.textContent = `
-    button{position:fixed;box-sizing:border-box;width:30px;height:30px;padding:0;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#1856ba;box-shadow:0 2px 8px #0003;cursor:pointer;pointer-events:auto;font:600 13px/1 system-ui,sans-serif}
-    button:hover,button[aria-pressed=true]{background:#1856ba;color:#fff}
-    button:focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+    button{position:fixed;box-sizing:border-box;width:30px;height:30px;padding:0;border:1px solid var(--wp-border,#cbd5e1);border-radius:9px;background:var(--wp-image-button-background,#fff);color:var(--wp-image-button-foreground,#1856ba);box-shadow:0 2px 8px #0003;cursor:pointer;pointer-events:auto;font:600 13px/1 system-ui,sans-serif}
+    button:hover,button[aria-pressed=true]{background:var(--wp-image-button-foreground,#1856ba);color:var(--wp-image-button-background,#fff)}
+    button:focus-visible{outline:3px solid var(--wp-image-button-background,#60a5fa);outline-offset:2px}
     button:disabled{cursor:wait;opacity:.8}
     canvas{position:fixed;pointer-events:none;box-sizing:content-box}
-    .status{position:fixed;max-width:min(280px,85vw);padding:7px 10px;background:#172033;color:#fff;border-radius:7px;font:12px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;pointer-events:none}
+    .status{position:fixed;max-width:min(280px,85vw);padding:7px 10px;background:var(--wp-surface,#172033);color:var(--wp-foreground,#fff);border:1px solid var(--wp-border,transparent);border-radius:7px;font:12px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;pointer-events:none}
     [hidden]{display:none!important}
   `;
   root.append(style); document.documentElement.append(host);
@@ -246,7 +250,7 @@ function showContextNotice(message: string): void {
   notice.style.cssText = "all:initial!important;position:fixed!important;top:16px!important;right:16px!important;z-index:2147483647!important;";
   const shadow = notice.attachShadow({ mode: "open" });
   const text = document.createElement("div"); text.setAttribute("role", "alert"); text.textContent = message;
-  text.style.cssText = "max-width:320px;padding:12px 16px;background:#172033;color:white;border-radius:8px;font:14px/1.6 system-ui,sans-serif";
+  text.style.cssText = "max-width:320px;padding:12px 16px;background:var(--wp-surface,#172033);color:var(--wp-foreground,white);border:1px solid var(--wp-border,transparent);border-radius:8px;font:14px/1.6 system-ui,sans-serif";
   shadow.append(text); document.documentElement.append(notice);
   window.setTimeout(() => notice.remove(), 10_000);
 }

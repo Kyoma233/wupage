@@ -1,7 +1,10 @@
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from "./defaults";
 import { isLlmProvider } from "./performance";
 import { normalizeAutoTranslation } from "./auto-translation";
+import { normalizeSelectionTranslation } from "./dictionary";
+import { normalizeAppearance } from "./appearance";
 import { normalizeServiceConfig, supportsServiceMode } from "./translation-service";
+import { normalizeRequestTemplate, supportsRequestTemplate } from "./request-template";
 import type { ExtensionSettings, ProviderConfig } from "./types";
 
 export async function getSettings(): Promise<ExtensionSettings> {
@@ -35,7 +38,9 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
     ...DEFAULT_SETTINGS,
     ...input,
     providers,
+    appearance: normalizeAppearance(input.appearance),
     autoTranslation: normalizeAutoTranslation(input.autoTranslation),
+    selectionTranslation: normalizeSelectionTranslation(input.selectionTranslation),
     targetLang: readString(input.targetLang, DEFAULT_SETTINGS.targetLang),
     sourceLang: readString(input.sourceLang, DEFAULT_SETTINGS.sourceLang),
     activeProviderId,
@@ -151,6 +156,9 @@ function normalizeProvider(
       ...provider,
       ollamaCompatibility: provider.ollamaCompatibility !== false
     };
+  }
+  if (supportsRequestTemplate(provider)) {
+    provider = { ...provider, requestTemplate: normalizeRequestTemplate(provider.requestTemplate) };
   }
   const legacyPerformance = provider.performanceMode === undefined;
   const performanceMode = provider.performanceMode === "custom"

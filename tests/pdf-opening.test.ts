@@ -231,7 +231,7 @@ describe("PDF source opening", () => {
     expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(2);
   });
 
-  it("resets automatic translation when a different document is opened", async () => {
+  it("resets the old session and automatically translates a different document once", async () => {
     await launch(fileUrl);
     await vi.waitFor(() => expect(translated()).toBe(true));
     const button = document.querySelector<HTMLButtonElement>("#translateDocument")!;
@@ -243,7 +243,7 @@ describe("PDF source opening", () => {
     await vi.waitFor(() => expect(document.querySelector("#documentName")?.textContent).toBe("second.pdf"));
     window.dispatchEvent(new Event("scroll"));
     await new Promise((resolve) => window.setTimeout(resolve, 250));
-    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(2);
   });
 
   it("does not read a file before permission, then retries the same PDF and translation", async () => {
@@ -286,12 +286,59 @@ describe("PDF source opening", () => {
     expect(fileAccess).not.toHaveBeenCalled();
   });
 
-  it("keeps manually opened files idle until the user asks for translation", async () => {
+  it("honors an explicit opt-out of automatic translation", async () => {
     await launch(fileUrl, false);
     await vi.waitFor(() => expect(document.querySelector<HTMLElement>("#readerView")?.hidden).toBe(false));
     expect(translated()).toBe(false);
     document.querySelector<HTMLButtonElement>("#translateDocument")!.click();
     await vi.waitFor(() => expect(translated()).toBe(true));
+  });
+
+  it.each(["file selection", "drop"])("automatically translates after %s in a blank workspace", async (entry) => {
+    await import("../src/pdf/index");
+    await vi.waitFor(() => expect(document.querySelector("#provider option")).not.toBeNull());
+    expect(translated()).toBe(false);
+    const file = new File(["%PDF-test"], "selected.pdf", { type: "application/pdf" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("%PDF-test").buffer });
+    if (entry === "file selection") {
+      const input = document.querySelector<HTMLInputElement>("#fileInput")!;
+      Object.defineProperty(input, "files", { value: [file] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+      document.querySelector("#dropZone")!.dispatchEvent(event);
+    }
+    await vi.waitFor(() => expect(translated()).toBe(true));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
+    expect(fetchPdf).not.toHaveBeenCalled();
+  });
+
+  it("automatically translates a URL without an explicit translation flag", async () => {
+    window.history.replaceState({}, "", "/pdf.html?url=https%3A%2F%2Fexample.com%2Freport.pdf");
+    await import("../src/pdf/index");
+    await vi.waitFor(() => expect(translated()).toBe(true));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+  });
+
+  it("automatically translates an address submitted in a blank workspace", async () => {
+    await import("../src/pdf/index");
+    await vi.waitFor(() => expect(document.querySelector("#provider option")).not.toBeNull());
+    document.querySelector<HTMLInputElement>("#pdfUrl")!.value = "https://example.com/report.pdf";
+    document.querySelector("#urlForm")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(translated()).toBe(true));
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH")).toHaveLength(1);
+  });
+
+  it("keeps the scanned-document warning when there is no translatable text", async () => {
+    const documentProxy = await getDocument.getMockImplementation()!().promise;
+    const page = await documentProxy.getPage(1);
+    page.getTextContent = async () => ({ items: [], styles: {} });
+    await launch("https://example.com/scanned.pdf");
+    await vi.waitFor(() => expect(document.querySelector("#statusToast")?.textContent).toContain("未检测到可翻译文字"));
+    expect(translated()).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>("#translateDocument")!.disabled).toBe(true);
   });
 
   it("reports a missing local file without attempting translation", async () => {

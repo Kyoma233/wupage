@@ -72,6 +72,9 @@ interface PdfPageState {
 
 interface PdfTranslationSession {
   runId: number;
+  forDownload: boolean;
+  finished: Promise<void>;
+  resolveFinished: () => void;
   radius: number | null;
   requestOptions: { sourceLang: string; targetLang: string; providerId: string };
   context: string;
@@ -202,8 +205,7 @@ function bindEvents(): void {
   window.addEventListener("scroll", scheduleReadingTranslation, { passive: true });
   window.addEventListener("resize", scheduleReadingTranslation);
   window.addEventListener("pagehide", () => {
-    window.clearTimeout(translationScrollTimer);
-    translationSession = undefined;
+    cancelTranslationSession();
     translationRun += 1;
     window.removeEventListener("scroll", scheduleReadingTranslation);
     window.removeEventListener("resize", scheduleReadingTranslation);
@@ -211,6 +213,7 @@ function bindEvents(): void {
 }
 
 function onReaderSettingsChange(): void {
+  if (downloadButton.classList.contains("is-loading")) return;
   // A different language or service requires an explicit start with that config.
   const session = translationSession;
   if (session) {
@@ -229,25 +232,23 @@ async function openLocalPdf(file: File): Promise<void> {
     return;
   }
   try {
-    await loadPdf(await file.arrayBuffer(), file.name);
-    const autoTranslate = pendingSource?.autoTranslate;
+    const autoTranslate = pendingSource?.autoTranslate ?? getPdfLaunchOptions(window.location.href).autoTranslate;
+    await loadPdf(await file.arrayBuffer(), file.name, autoTranslate);
     pendingSource = undefined;
-    if (autoTranslate) await translateDocument();
   } catch (error) {
     handleOpenError(error);
   }
 }
 
-async function openRequestedPdf(value: string, autoTranslate = false): Promise<void> {
+async function openRequestedPdf(value: string, autoTranslate = getPdfLaunchOptions(window.location.href).autoTranslate): Promise<void> {
   pendingSource = { url: value, autoTranslate };
-  const opened = await openPdfUrl(value);
+  const opened = await openPdfUrl(value, autoTranslate);
   if (opened) {
     pendingSource = undefined;
-    if (autoTranslate) await translateDocument();
   }
 }
 
-async function openPdfUrl(value: string): Promise<boolean> {
+async function openPdfUrl(value: string, autoTranslate: boolean): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(value);
@@ -282,7 +283,7 @@ async function openPdfUrl(value: string): Promise<boolean> {
       PDF_DOWNLOAD_TIMEOUT_MS,
       "PDF 文件读取"
     );
-    await loadPdf(data, name);
+    await loadPdf(data, name, autoTranslate);
     return true;
   } catch (error) {
     handleOpenError(error);
@@ -290,12 +291,11 @@ async function openPdfUrl(value: string): Promise<boolean> {
   }
 }
 
-async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
+async function loadPdf(data: ArrayBuffer, name: string, autoTranslate: boolean): Promise<void> {
   fileAccessNotice.hidden = true;
   showLoading("正在打开 PDF", "正在读取文档结构…");
   translationRun += 1;
-  translationSession = undefined;
-  window.clearTimeout(translationScrollTimer);
+  cancelTranslationSession();
   translateButton.classList.remove("is-loading");
   translateButton.disabled = true;
   pageStates.forEach((page) => {
@@ -399,16 +399,21 @@ async function loadPdf(data: ArrayBuffer, name: string): Promise<void> {
   documentSummary.hidden = false;
   replaceButton.hidden = false;
   downloadButton.hidden = false;
-  downloadButton.disabled = true;
-  translateButton.disabled = pageStates.every((page) => !page.blocks.some((block) => block.translatable));
+  const hasTranslatableText = pageStates.some((page) => page.blocks.some((block) => block.translatable));
+  translateButton.disabled = !hasTranslatableText;
+  updateDownloadButtonState();
   hideLoading();
-  showStatus(
-    pageStates.some((page) => page.blocks.some((block) => block.translatable))
-      ? `文档已打开，点击“${translateButton.textContent?.trim()}”开始翻译。`
-      : "未检测到可翻译文字，这可能是一份扫描版 PDF。",
-    pageStates.some((page) => page.blocks.some((block) => block.translatable)) ? "success" : "error"
-  );
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: "instant" });
+  if (hasTranslatableText && autoTranslate) {
+    await translateDocument();
+  } else {
+    showStatus(
+      hasTranslatableText
+        ? `文档已打开，点击“${translateButton.textContent?.trim()}”开始翻译。`
+        : "未检测到可翻译文字，这可能是一份扫描版 PDF。",
+      hasTranslatableText ? "success" : "error"
+    );
+  }
 }
 
 function createPageState(
@@ -797,13 +802,18 @@ function updateTranslationScopeControl(): void {
   if (pdfDocument) documentMeta.textContent = `${pdfDocument.numPages} 页 · ${radius === null ? "全文" : `前后各 ${radius} 页`}`;
 }
 
-async function translateDocument(): Promise<void> {
-  if (!pdfDocument || !pageStates.length || translateButton.classList.contains("is-loading")
-    || downloadButton.classList.contains("is-loading")) return;
-  const startingPage = getReadingPageNumber();
-  const runId = ++translationRun;
+function cancelTranslationSession(): void {
+  translationSession?.resolveFinished();
   translationSession = undefined;
   window.clearTimeout(translationScrollTimer);
+}
+
+async function translateDocument(forDownload = false): Promise<PdfTranslationSession | undefined> {
+  if (!pdfDocument || !pageStates.length || translateButton.classList.contains("is-loading")
+    || (!forDownload && downloadButton.classList.contains("is-loading"))) return;
+  const startingPage = getReadingPageNumber();
+  const runId = ++translationRun;
+  cancelTranslationSession();
   translateButton.disabled = true;
   downloadButton.disabled = true;
   translateButton.classList.add("is-loading");
@@ -815,20 +825,25 @@ async function translateDocument(): Promise<void> {
     translateButton.disabled = false;
     translateButton.classList.remove("is-loading");
     updateDownloadButtonState();
+    if (forDownload) throw error;
     showStatus(`无法开始翻译：${formatTranslationError(error)}`, "error");
     return;
   }
   if (runId !== translationRun) return;
   const requestOptions = { sourceLang: sourceLang.value, targetLang: targetLang.value, providerId: provider.value };
   const context = JSON.stringify([requestOptions, settings.providers.find((entry) => entry.id === requestOptions.providerId)]);
+  let resolveFinished!: () => void;
+  const finished = new Promise<void>((resolve) => { resolveFinished = resolve; });
   const session: PdfTranslationSession = {
-    runId, radius: settings.pdfTranslationPageRadius, requestOptions, context,
+    runId, forDownload, finished, resolveFinished,
+    radius: forDownload ? null : settings.pdfTranslationPageRadius, requestOptions, context,
     readingPage: startingPage, scopePages: [], pending: new Set(), active: new Set(), failed: new Set(),
-    followReading: true, scrolling: false, busy: true, completed: 0, translated: 0, cached: 0, failedPages: 0
+    followReading: !forDownload, scrolling: false, busy: true, completed: 0, translated: 0, cached: 0, failedPages: 0
   };
   translationSession = session;
   refreshTranslationRange(session);
   pumpTranslationQueue(session);
+  return session;
 }
 
 function scheduleReadingTranslation(): void {
@@ -863,7 +878,7 @@ function refreshTranslationRange(session: PdfTranslationSession): void {
 
 function pumpTranslationQueue(session: PdfTranslationSession): void {
   if (translationSession !== session || session.runId !== translationRun || session.scrolling
-    || downloadButton.classList.contains("is-loading")) return;
+    || (downloadButton.classList.contains("is-loading") && !session.forDownload)) return;
   if (session.pending.size && !session.busy) {
     session.busy = true;
     session.completed = session.translated = session.cached = session.failedPages = 0;
@@ -882,7 +897,8 @@ function pumpTranslationQueue(session: PdfTranslationSession): void {
     progressBar.style.width = `${Math.round(session.completed / total * 100)}%`;
     const label = session.radius === null ? "全文"
       : `第 ${session.scopePages[0].pageNumber}–${session.scopePages.at(-1)!.pageNumber} 页`;
-    showStatus(`正在翻译${label}：${session.completed} / ${total} 页…`, "info", true);
+    const action = session.forDownload ? "下载前正在补全翻译" : "正在翻译";
+    showStatus(`${action}${label}：${session.completed} / ${total} 页…`, "info", true);
   } else if (session.busy) {
     finishTranslationBatch(session);
   }
@@ -902,7 +918,8 @@ async function translatePage(session: PdfTranslationSession, page: PdfPageState)
     let translationIndex = 0;
     const translations = page.blocks.map((block) => {
       if (!block.translatable) return block.text;
-      const translation = result.translations[translationIndex++] ?? block.text;
+      const translation = result.translations[translationIndex++];
+      if (!translation?.trim()) throw new Error("翻译服务返回的译文不完整，请重试。");
       validatePdfMathTranslation(translation, block.formulas);
       return translation;
     });
@@ -925,9 +942,11 @@ async function translatePage(session: PdfTranslationSession, page: PdfPageState)
 
 function finishTranslationBatch(session: PdfTranslationSession): void {
   session.busy = false;
-  translateButton.disabled = false;
+  translateButton.disabled = downloadButton.classList.contains("is-loading");
   translateButton.classList.remove("is-loading");
   updateDownloadButtonState();
+  session.resolveFinished();
+  if (session.forDownload) return;
   if (session.failedPages) {
     showStatus(`翻译完成：${session.translated} 段成功，${session.failedPages} 页失败，可点击翻译按钮重试。`, "error");
   } else {
@@ -955,28 +974,41 @@ function renderPageTranslations(page: PdfPageState, translations: string[], cont
 }
 
 async function downloadTranslatedDocument(): Promise<void> {
-  if (!pdfDocument || !pageStates.length || !hasTranslatedContent()) {
-    showStatus("请先完成文档翻译，再下载译文 PDF。", "error");
-    return;
-  }
+  if (downloadButton.disabled || !pdfDocument || !pageStates.length) return;
 
+  const documentProxy = pdfDocument;
   downloadButton.disabled = true;
   downloadButton.classList.add("is-loading");
-  downloadButton.textContent = "正在生成…";
+  downloadButton.textContent = "正在翻译…";
+  sourceLang.disabled = targetLang.disabled = provider.disabled = true;
+  enhanceProviderSelect(provider, settings.providers);
   progressBar.style.width = "0%";
   const rasterPages: RasterPdfPage[] = [];
 
   try {
+    const session = await translateDocument(true);
+    if (!session || pdfDocument !== documentProxy) return;
+    await session.finished;
+    if (translationSession !== session || pdfDocument !== documentProxy) return;
+    const incompletePages = pageStates.filter((page) => page.blocks.some((block) => block.translatable)
+      && (!page.translations || page.translationContext !== session.context || session.failed.has(page)));
+    if (incompletePages.length) {
+      throw new Error(`${incompletePages.length} 页未完成翻译，请再次点击“下载译文”重试。`);
+    }
+    downloadButton.textContent = "正在生成…";
     for (let index = 0; index < pageStates.length; index += 1) {
       const page = pageStates[index];
       if (!renderedPages.has(page.pageNumber)) await renderPdfPage(page);
+      if (translationSession !== session || pdfDocument !== documentProxy) return;
       const canvas = page.translations
         ? composeTranslatedPageCanvas(page.translatedCanvas, page.translationLayer)
         : page.canvas;
+      const imageBytes = await canvasToJpegBytes(canvas);
+      if (translationSession !== session || pdfDocument !== documentProxy) return;
       rasterPages.push({
         width: page.pdfWidth,
         height: page.pdfHeight,
-        imageBytes: await canvasToJpegBytes(canvas),
+        imageBytes,
         format: "jpeg"
       });
       const percentage = Math.round(((index + 1) / pageStates.length) * 85);
@@ -986,6 +1018,7 @@ async function downloadTranslatedDocument(): Promise<void> {
 
     const fileName = translatedPdfFileName(currentDocumentName);
     const bytes = await buildRasterPdf(rasterPages, fileName.replace(/\.pdf$/iu, ""));
+    if (translationSession !== session || pdfDocument !== documentProxy) return;
     progressBar.style.width = "100%";
     downloadPdfBytes(bytes, fileName);
     showStatus(`译文 PDF 已生成：${fileName}`, "success");
@@ -994,24 +1027,31 @@ async function downloadTranslatedDocument(): Promise<void> {
   } finally {
     downloadButton.classList.remove("is-loading");
     downloadButton.textContent = "下载译文";
+    sourceLang.disabled = targetLang.disabled = provider.disabled = false;
+    enhanceProviderSelect(provider, settings.providers);
+    translateButton.disabled = Boolean(translationSession?.busy)
+      || !pageStates.some((page) => page.blocks.some((block) => block.translatable));
     updateDownloadButtonState();
+    if (translationSession?.forDownload) {
+      translationSession.forDownload = false;
+      translationSession.radius = settings.pdfTranslationPageRadius;
+      translationSession.followReading = true;
+      translationSession.readingPage = getReadingPageNumber();
+      refreshTranslationRange(translationSession);
+    }
     if (translationSession) pumpTranslationQueue(translationSession);
     window.setTimeout(() => {
-      if (!translateButton.classList.contains("is-loading")) progressBar.style.width = "0%";
+      if (!translateButton.classList.contains("is-loading") && !downloadButton.classList.contains("is-loading")) {
+        progressBar.style.width = "0%";
+      }
     }, 1200);
   }
-}
-
-function hasTranslatedContent(): boolean {
-  return pageStates.some((page) => page.translations?.some((text, index) =>
-    Boolean(page.blocks[index]?.translatable && text.trim())
-  ));
 }
 
 function updateDownloadButtonState(): void {
   downloadButton.disabled = downloadButton.classList.contains("is-loading")
     || translateButton.classList.contains("is-loading")
-    || !hasTranslatedContent();
+    || !pdfDocument || !pageStates.some((page) => page.blocks.some((block) => block.translatable));
 }
 
 function renderPageError(page: PdfPageState, error: unknown): void {

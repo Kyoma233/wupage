@@ -69,6 +69,34 @@ describe("content DOM translation extraction", () => {
     expect(document.querySelector("article")!.innerHTML).toBe(original);
   });
 
+  it.each(["inline-block", "inline-flex", "block", "grid"])("keeps a self-contained %s list link inside its layout box", (display) => {
+    document.body.innerHTML = `<div id="sidebar"><ul><li><div class="favicon" title="Site"></div><a href="/question">Lower your <em>expectations</em> for this puzzle</a></li></ul>
+      <ul><li><a href="/tag/stream" rel="tag">stream</a></li></ul></div>`;
+    stubLayout("rgb(0, 102, 204)", { style: element => ({
+      display: element.matches("a") ? display : element.matches("li") ? "list-item" : "block"
+    }) });
+    const original = document.querySelector("#sidebar")!.innerHTML;
+    const links = [...document.querySelectorAll("a")];
+    const icon = document.querySelector(".favicon");
+    const segments = collectTextSegments();
+    expect(segments.map(({ text }) => text)).toEqual(["Lower your expectations for this puzzle", "stream"]);
+    renderTranslationPlaceholders(segments);
+    expect(document.querySelector("li > .wupage-translation")).toBeNull();
+    renderTranslations(segments.map(({ id, text }) => ({ id, text: text === "stream" ? "流" : "降低你对这个谜题的期望" })), "replace");
+    for (const mode of ["replace", "bilingual", "bilingual-accent", "replace"] as const) {
+      setTranslationDisplayMode(mode);
+      expect([...document.querySelectorAll("a")]).toEqual(links);
+      expect(document.querySelector(".favicon")).toBe(icon);
+      expect(document.querySelector("li > .wupage-translation")).toBeNull();
+      expect(links.map(link => link.querySelector(".wupage-translation")?.textContent))
+        .toEqual(["降低你对这个谜题的期望", "流"]);
+      expect(links.map(link => link.getAttribute("href"))).toEqual(["/question", "/tag/stream"]);
+      expect(invalidateStaleSegments()).toEqual([]);
+    }
+    clearTranslations();
+    expect(document.querySelector("#sidebar")!.innerHTML).toBe(original);
+  });
+
   it("protects inline code inside div-based prose", () => {
     document.body.innerHTML = `<article><div>Call <code>fetch()</code> before continuing.</div></article>`;
     stubLayout();

@@ -49,6 +49,174 @@ describe("options provider model and test state", () => {
     await vi.waitFor(() => expect(query<HTMLElement>("#providerForm").dataset.providerId).toBe(id));
   }
 
+  it("edits and saves a disabled service while retaining the enabled translation service", async () => {
+    stored.providers.find(entry => entry.id === "zhipu-glm")!.enabled = false;
+    await mount();
+    expect(query<HTMLButtonElement>("[data-action='select'][data-provider-id='zhipu-glm']").disabled).toBe(false);
+    await selectProvider("zhipu-glm");
+    expect(stored.activeProviderId).toBe("deepseek");
+    expect(query<HTMLElement>("#disabledProviderHint").hidden).toBe(false);
+    query<HTMLInputElement>("[data-field='apiKey']").value = "disabled-draft-key";
+    query<HTMLSelectElement>("[data-field='model']").value = "glm-4.7-flash";
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    query<HTMLInputElement>("[data-field='requestTemplateEnabled']").click();
+    query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value = '{"enable_thinking":false}';
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(query<HTMLElement>("#status").textContent).toBe("已保存。"));
+    expect(query<HTMLElement>("#providerForm").dataset.providerId).toBe("zhipu-glm");
+    expect(stored.activeProviderId).toBe("deepseek");
+    expect(stored.providers.find(entry => entry.id === "zhipu-glm")).toMatchObject({ enabled: false,
+      apiKey: "disabled-draft-key", model: "glm-4.7-flash", requestTemplate: { enabled: true, body: '{"enable_thinking":false}' } });
+    expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ apiKey: "", model: "deepseek-flash" });
+    await selectProvider("deepseek"); await selectProvider("zhipu-glm");
+    expect(query<HTMLInputElement>("[data-field='apiKey']").value).toBe("disabled-draft-key");
+    expect(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value).toBe('{"enable_thinking":false}');
+  });
+
+  it("keeps a service open when disabling it and tests its draft without enabling it", async () => {
+    await mount();
+    query<HTMLButtonElement>("#providerTrigger").click();
+    query<HTMLButtonElement>("[data-action='toggle'][data-provider-id='deepseek']").click();
+    await vi.waitFor(() => expect(query<HTMLElement>("#disabledProviderHint").hidden).toBe(false));
+    expect(query<HTMLElement>("#providerForm").dataset.providerId).toBe("deepseek");
+    expect(stored.activeProviderId).toBe("microsoft-web-translate");
+    expect(query<HTMLButtonElement>("[data-action='select'][data-provider-id='deepseek']").getAttribute("aria-selected")).toBe("true");
+    query<HTMLInputElement>("[data-field='apiKey']").value = "test-before-enabling";
+    query<HTMLButtonElement>("#test").click();
+    await vi.waitFor(() => expect(testService).toHaveBeenCalledWith("deepseek"));
+    await vi.waitFor(() => expect(query<HTMLElement>("[data-role='provider-test-status']").textContent).toBe("测试通过：你好"));
+    expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ enabled: false, apiKey: "test-before-enabling" });
+    expect(stored.activeProviderId).toBe("microsoft-web-translate");
+  });
+
+  it("shows provider defaults without saving them as overrides and loads an editable copy", async () => {
+    Object.assign(stored.providers.find(entry => entry.id === "deepseek")!, { apiKey: "saved-test-secret" });
+    await mount();
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    const headers = query<HTMLTextAreaElement>("[data-field='requestHeadersTemplate']");
+    const body = query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']");
+    expect(JSON.parse(headers.value)).toEqual({ "Content-Type": "application/json", Authorization: "Bearer {{apiKey}}" });
+    expect(headers.value).not.toContain("saved-test-secret");
+    expect(JSON.parse(body.value)).toMatchObject({ model: "{{model}}", thinking: { type: "disabled" }, temperature: 0 });
+    expect(query<HTMLFieldSetElement>("#requestTemplateFields").disabled).toBe(true);
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(query<HTMLElement>("#status").textContent).toBe("已保存。"));
+    expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: undefined });
+    query<HTMLButtonElement>("[data-action='load-default-request-template']").click();
+    expect(query<HTMLFieldSetElement>("#requestTemplateFields").disabled).toBe(false);
+    expect(query<HTMLInputElement>("[data-field='requestTemplateEnabled']").checked).toBe(true);
+    const editableBody = query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']");
+    editableBody.value = editableBody.value.replace('"disabled"', '"enabled"');
+    const loadedBody = editableBody.value;
+    const loadedHeaders = query<HTMLTextAreaElement>("[data-field='requestHeadersTemplate']").value;
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: {
+      enabled: true, headers: loadedHeaders, body: loadedBody
+    } }));
+    await selectProvider("openai-compatible");
+    expect(JSON.parse(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value)).not.toHaveProperty("thinking");
+    await selectProvider("deepseek");
+    expect(JSON.parse(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value).thinking.type).toBe("enabled");
+  });
+
+  it("updates default authentication placeholders with the draft key without overwriting custom headers", async () => {
+    await mount();
+    const key = query<HTMLInputElement>("[data-field='apiKey']");
+    const headers = query<HTMLTextAreaElement>("[data-field='requestHeadersTemplate']");
+    expect(JSON.parse(headers.value)).not.toHaveProperty("Authorization");
+    key.value = "draft-secret"; key.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(JSON.parse(headers.value).Authorization).toBe("Bearer {{apiKey}}");
+    expect(headers.value).not.toContain("draft-secret");
+    headers.value = '{"x-custom":"saved"}';
+    key.value = ""; key.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(headers.value).toBe('{"x-custom":"saved"}');
+  });
+
+  it("keeps form drafts when changing tabs and supports arrow-key navigation", async () => {
+    await mount();
+    const key = query<HTMLInputElement>("[data-field='apiKey']");
+    key.value = "draft-key";
+    const general = query<HTMLButtonElement>("#providerGeneralTab");
+    general.focus();
+    general.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(document.activeElement).toBe(query("#providerAdvancedTab"));
+    expect(query<HTMLElement>("#providerGeneralPanel").hidden).toBe(true);
+    expect(query<HTMLElement>("#providerAdvancedPanel").hidden).toBe(false);
+    query<HTMLInputElement>("[data-field='requestTemplateEnabled']").click();
+    const body = query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']");
+    body.value = '{"enable_thinking":false}';
+    query<HTMLButtonElement>("#providerGeneralTab").click();
+    expect(query<HTMLInputElement>("[data-field='apiKey']")).toBe(key);
+    expect(key.value).toBe("draft-key");
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    expect(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']")).toBe(body);
+    expect(body.value).toBe('{"enable_thinking":false}');
+  });
+
+  it("saves per-service templates, tests them from the advanced tab, and retains disabled drafts", async () => {
+    await mount();
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    query<HTMLInputElement>("[data-field='requestTemplateEnabled']").click();
+    query<HTMLTextAreaElement>("[data-field='requestHeadersTemplate']").value = '{"x-opencode-session":"wupage"}';
+    query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value = '{"thinking":{"type":"enabled"}}';
+    query<HTMLButtonElement>("[data-action='test-provider']").click();
+    await vi.waitFor(() => expect(testService).toHaveBeenCalledWith("deepseek"));
+    await vi.waitFor(() => expect(query<HTMLElement>("[data-role='provider-test-status']").textContent).toBe("测试通过：你好"));
+    expect(query<HTMLElement>("[data-role='provider-test-status']").closest("[role='tabpanel']")).toBeNull();
+    expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: {
+      enabled: true, headers: '{"x-opencode-session":"wupage"}', body: '{"thinking":{"type":"enabled"}}'
+    } });
+    await selectProvider("zhipu-glm");
+    expect(JSON.parse(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value)).toMatchObject({ model: "{{model}}", temperature: 0 });
+    await selectProvider("deepseek");
+    expect(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value).toContain('"enabled"');
+    query<HTMLInputElement>("[data-field='requestTemplateEnabled']").click();
+    expect(query<HTMLFieldSetElement>("#requestTemplateFields").disabled).toBe(true);
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: { enabled: false } }));
+    await selectProvider("zhipu-glm"); await selectProvider("deepseek");
+    expect(query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']").value).toContain('"enabled"');
+  });
+
+  it("reveals and focuses invalid templates and prevents saving or testing", async () => {
+    await mount();
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    query<HTMLInputElement>("[data-field='requestTemplateEnabled']").click();
+    const body = query<HTMLTextAreaElement>("[data-field='requestBodyTemplate']");
+    body.value = '{"stream":true}';
+    query<HTMLButtonElement>("#providerGeneralTab").click();
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(query<HTMLElement>("[data-role='request-template-status']").textContent).toContain("非流式"));
+    expect(document.activeElement).toBe(body);
+    expect(query<HTMLElement>("#providerAdvancedPanel").hidden).toBe(false);
+    expect(body.getAttribute("aria-invalid")).toBe("true");
+    expect(stored.providers.find(entry => entry.id === "deepseek")).not.toHaveProperty("requestTemplate");
+    query<HTMLButtonElement>("[data-action='test-provider']").click();
+    await flush();
+    expect(testService).not.toHaveBeenCalled();
+    body.value = '{"enable_thinking":false}'; body.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(query<HTMLElement>("[data-role='request-template-status']").hidden).toBe(true);
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: { enabled: true } }));
+    query<HTMLButtonElement>("[data-action='reset-request-template']").click();
+    expect(query<HTMLInputElement>("[data-field='requestTemplateEnabled']").checked).toBe(false);
+    expect(JSON.parse(body.value)).toMatchObject({ thinking: { type: "disabled" }, model: "{{model}}" });
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.providers.find(entry => entry.id === "deepseek")).toMatchObject({ requestTemplate: undefined }));
+  });
+
+  it("places existing HTTP headers and body in the advanced tab and preserves their legacy syntax", async () => {
+    stored.activeProviderId = "http-template";
+    await mount();
+    expect(query("[data-field='headers']").closest("#providerAdvancedPanel")).not.toBeNull();
+    expect(query<HTMLTextAreaElement>("[data-field='bodyTemplate']").value).toContain("{{json texts}}");
+    expect(document.querySelector("[data-field='requestTemplateEnabled']")).toBeNull();
+    query<HTMLButtonElement>("#providerAdvancedTab").click();
+    query<HTMLTextAreaElement>("[data-field='headers']").value = '{"x-session":"http"}';
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.providers.find(entry => entry.id === "http-template")).toMatchObject({ headers: { "x-session": "http" } }));
+  });
+
   it("reveals the default language checkbox with the master switch and preserves an unchecked choice", async () => {
     await mount();
     const enabled = query<HTMLInputElement>("#autoTranslateEnabled");

@@ -24,6 +24,7 @@ import { TranslationResponseError } from "./translation-response";
 import { translateLocally } from "./local";
 import { supportsServiceMode, translationApiOptions } from "../shared/translation-service";
 import { signVolcengineTranslation } from "./volcengine-signing";
+import { applyRequestTemplate, defaultLlmRequest, requestTemplateContext, validateRequestTemplate } from "../shared/request-template";
 
 const GOOGLE_WEB_REQUEST_CONCURRENCY = 4;
 const WEB_TRANSLATION_TIMEOUT_MS = 20_000;
@@ -56,23 +57,25 @@ Estimate the original text color and the local background color behind the text.
   let correction = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      const userPrompt = "Translate the image text and return its bounding boxes." + correction;
+      const prepared = applyRequestTemplate(config.requestTemplate, headers, {
+        model: config.model,
+        temperature: 0,
+        max_tokens: 12000,
+        ...(config.type === "deepseek" ? { thinking: { type: "disabled" } } : {}),
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: [
+            { type: "text", text: userPrompt },
+            { type: "image_url", image_url: { url: request.dataUrl } }
+          ] }
+        ]
+      }, { ...requestTemplateContext(config, { texts: [request.sourceText ?? ""], sourceLang, targetLang }, prompt), userPrompt });
       const response = await fetchWithLlmRetry(chatCompletionsEndpoint(config.baseURL,
         config.type === "openai-compatible" && usesOllamaCompatibility(config)), {
         method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: config.model,
-          temperature: 0,
-          max_tokens: 12000,
-          ...(config.type === "deepseek" ? { thinking: { type: "disabled" } } : {}),
-          messages: [
-            { role: "system", content: prompt },
-            { role: "user", content: [
-              { type: "text", text: "Translate the image text and return its bounding boxes." + correction },
-              { type: "image_url", image_url: { url: request.dataUrl } }
-            ] }
-          ]
-        })
+        headers: prepared.headers,
+        body: JSON.stringify(prepared.body)
       }, config);
       if (!response.ok) {
         if (best?.regions.length) return best;
@@ -630,11 +633,16 @@ class OpenAICompatibleProvider implements TranslatorProvider {
     return this.config.label;
   }
 
-  constructor(protected readonly config: OpenAICompatibleConfig) {}
+  constructor(protected readonly config: OpenAICompatibleConfig | DeepSeekConfig | ZhipuGlmConfig) {}
 
   validateConfig(): ValidationResult {
     if (!this.config.baseURL.trim()) return { ok: false, message: "Base URL is required." };
     if (!this.config.model.trim()) return { ok: false, message: "Model is required." };
+    try {
+      validateRequestTemplate(this.config.requestTemplate);
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
     return { ok: true };
   }
 
@@ -642,7 +650,8 @@ class OpenAICompatibleProvider implements TranslatorProvider {
     const validation = this.validateConfig();
     if (!validation.ok) throw new Error(validation.message);
 
-    const endpoint = chatCompletionsEndpoint(this.config.baseURL, usesOllamaCompatibility(this.config));
+    const ollama = this.config.type === "openai-compatible" && usesOllamaCompatibility(this.config);
+    const endpoint = chatCompletionsEndpoint(this.config.baseURL, ollama);
     const systemPrompt = renderTemplate(withTranslationInstructions(this.config.systemPrompt), {
       texts: request.texts,
       context: request.context ?? "",
@@ -650,36 +659,19 @@ class OpenAICompatibleProvider implements TranslatorProvider {
       targetLang: request.targetLang
     });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json"
-    };
-    if (this.config.apiKey.trim()) headers.Authorization = `Bearer ${this.config.apiKey}`;
+    const context = requestTemplateContext(this.config, request, systemPrompt);
+    const defaults = defaultLlmRequest(this.config, context);
+    const prepared = applyRequestTemplate(this.config.requestTemplate, defaults.headers, defaults.body, context);
     const init: RequestInit = {
       method: "POST",
       signal,
-      headers,
-      body: JSON.stringify({
-        model: this.config.model,
-        temperature: 0,
-        ...this.requestBodyExtras(),
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: JSON.stringify({
-              sourceLang: request.sourceLang ?? "auto",
-              targetLang: request.targetLang,
-              context: request.context ?? "",
-              texts: request.texts
-            })
-          }
-        ]
-      })
+      headers: prepared.headers,
+      body: JSON.stringify(prepared.body)
     };
 
     const response = await fetchWithLlmRetry(endpoint, init, this.config);
     if (!response.ok) {
-      const hint = response.status !== 403 ? "" : usesOllamaCompatibility(this.config)
+      const hint = response.status !== 403 ? "" : ollama
         ? " Ollama 兼容已开启，请检查 API Key、服务端权限或反向代理配置。"
         : " 如果使用 Ollama，请在服务设置中开启“Ollama 兼容”；仍失败时检查服务端权限或 OLLAMA_ORIGINS。";
       throw new Error(`LLM request failed: ${response.status} ${response.statusText}. ${await readErrorBody(response)}${hint}`);
@@ -691,9 +683,6 @@ class OpenAICompatibleProvider implements TranslatorProvider {
     return parseTranslationArray(content, request.texts.length);
   }
 
-  protected requestBodyExtras(): Record<string, unknown> {
-    return {};
-  }
 }
 
 class AnthropicCompatibleProvider implements TranslatorProvider {
@@ -710,6 +699,11 @@ class AnthropicCompatibleProvider implements TranslatorProvider {
   validateConfig(): ValidationResult {
     if (!this.config.baseURL.trim()) return { ok: false, message: "Base URL is required." };
     if (!this.config.model.trim()) return { ok: false, message: "Model is required." };
+    try {
+      validateRequestTemplate(this.config.requestTemplate);
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
     return { ok: true };
   }
 
@@ -724,32 +718,14 @@ class AnthropicCompatibleProvider implements TranslatorProvider {
       sourceLang: request.sourceLang ?? "auto",
       targetLang: request.targetLang
     });
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01"
-    };
-    if (this.config.apiKey.trim()) headers["x-api-key"] = this.config.apiKey;
+    const context = requestTemplateContext(this.config, request, systemPrompt);
+    const defaults = defaultLlmRequest(this.config, context);
+    const prepared = applyRequestTemplate(this.config.requestTemplate, defaults.headers, defaults.body, context);
     const response = await fetchWithLlmRetry(endpoint, {
       method: "POST",
       signal,
-      headers,
-      body: JSON.stringify({
-        model: this.config.model,
-        max_tokens: 8192,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify({
-              sourceLang: request.sourceLang ?? "auto",
-              targetLang: request.targetLang,
-              context: request.context ?? "",
-              texts: request.texts
-            })
-          }
-        ]
-      })
+      headers: prepared.headers,
+      body: JSON.stringify(prepared.body)
     });
     if (!response.ok) {
       throw new Error(
@@ -768,31 +744,13 @@ class AnthropicCompatibleProvider implements TranslatorProvider {
 
 class ZhipuGlmProvider extends OpenAICompatibleProvider {
   constructor(config: ZhipuGlmConfig) {
-    super({
-      type: "openai-compatible",
-      ollamaCompatibility: false,
-      id: config.id,
-      label: config.label,
-      baseURL: config.baseURL,
-      apiKey: config.apiKey,
-      model: config.model,
-      systemPrompt: config.systemPrompt
-    });
+    super(config);
   }
 }
 
 class DeepSeekProvider extends OpenAICompatibleProvider {
   constructor(config: DeepSeekConfig) {
-    super({
-      type: "openai-compatible",
-      ollamaCompatibility: false,
-      id: config.id,
-      label: config.label,
-      baseURL: config.baseURL,
-      apiKey: config.apiKey,
-      model: config.model,
-      systemPrompt: config.systemPrompt
-    });
+    super(config);
   }
 
   override validateConfig(): ValidationResult {
@@ -802,9 +760,6 @@ class DeepSeekProvider extends OpenAICompatibleProvider {
     return { ok: true };
   }
 
-  protected override requestBodyExtras(): Record<string, unknown> {
-    return { thinking: { type: "disabled" } };
-  }
 }
 
 class HttpTemplateProvider implements TranslatorProvider {

@@ -66,6 +66,12 @@ tests/           # Vitest 测试
 public/          # Manifest 与扩展图标
 ```
 
+LLM 高级请求模板由 `src/shared/request-template.ts` 统一解析、校验并应用于 OpenAI、Anthropic、DeepSeek、智谱及视觉请求。模板先解析 JSON，再在值中替换变量，防止原文中的引号或换行改变请求结构；请求体采用 JSON Merge Patch 语义，请求头按名称大小写无关地覆盖或删除。配置保存在各服务的 `requestTemplate` 中，未配置或禁用时沿用原请求。设置页的选项卡与模板编辑位于 `src/options/provider-advanced.ts`。相关回归覆盖模板合并、变量转义、保存与禁用、实际请求参数、校验失败和键盘切换。
+
+默认文本请求和设置页模板共用 `defaultLlmRequestTemplate`，运行时通过 `defaultLlmRequest` 替换变量，避免预览与实际请求的字段漂移。空配置在编辑框内展示默认模板，未编辑的展示内容不会持久化为覆盖参数；「载入默认模板」启用并复制模板，「恢复默认请求」清除覆盖并恢复默认展示。认证头按常规设置中的凭据是否存在生成，展示和载入时只使用密钥占位符。
+
+`npm run test:templates` 在构建后加载真实扩展，通过本地 HTTP 服务检查四类 LLM 的自定义请求头和请求体、设置重载、关闭与恢复、校验错误、HTTP 模板兼容及窄屏布局。支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`，报告与截图保存在 `.npm-cache/request-templates/`，不访问真实付费接口。
+
 提交改动前建议依次运行：
 
 ```bash
@@ -97,9 +103,26 @@ npm run test:page
 - 同时检查 `dist/content.js` 能作为普通脚本解析，防止公共工具被拆成模块导入而导致内容脚本无法加载。报告保存在 `.npm-cache/page-translation/report.json`。
 - `npm run test:cards`：使用实际扩展和本地模拟服务，检查中英文界面下的混合语言卡片。覆盖 Flex/Grid 字段分离、标题字号与字重、作者链接、两种窗口宽度、三种显示模式和清除还原；匿名服务将整批判为目标语言时，未翻译项应独立重试。报告保存在 `.npm-cache/card-layout/`。
 - `npm run test:floating`：加载实际扩展，覆盖真实指针的 500 毫秒悬停延迟、离开取消、拖动与位置保存、悬浮球和弹窗的翻译中停止、迟到响应、原译文切换与缓存复用、动态列表、状态同步、缓存清理、失败重试、Debug、设置入口、键盘操作和小窗口。报告保存在 `.npm-cache/floating-interactions/`。
+- `npm run test:floating-responsive`：使用实际扩展和触屏仿真，覆盖 iPad Pro 13 的 1032 × 1376 竖屏与横屏。检查长按打开菜单、松手保持、外部轻点关闭、拖动取消长按、轻点翻译，以及首次翻译失败自动打开菜单的服务、语言与显示模式、菜单边界和触屏选择操作；另验证纯触屏隐藏段落模式及说明、鼠标环境保留入口，以及弹窗隐藏后的紧凑布局。报告与截图保存在 `.npm-cache/floating-responsive/`，支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER`。
 - `npm run test:settings`：延迟返回设置，逐帧检查弹窗和设置页重开时的图片翻译开关；保存为开启或关闭的状态都不得闪现错误位置或启动动画。报告保存在 `.npm-cache/settings-initialization/`。
 - 网页回归还包含明暗背景、现代 CSS 颜色和网页强制文字颜色下的实际颜色检查，切换原色、双色和替换模式时不得新增翻译请求。
 - 翻译链路的审视结论与兼容处理边界见 [翻译系统审视](translation-review.md)。
+
+### 外观配置与验证
+
+`src/shared/appearance.ts` 管理内置方案、自定义颜色校验和明暗方案选择；`appearance-runtime.ts` 监听系统明暗及本地设置变化，通过 `--wp-*` 变量应用到扩展界面。网页中只注入扩展专用变量，不修改宿主页面的 `color-scheme`；划词卡片在 Shadow DOM 中继承同一组变量。`src/options/appearance.ts` 保存独立表单草稿，与其他设置分类一起提交。
+
+配色按界面、悬浮球、译文与段落、划词翻译、图片入口分组。`src/shared/translation-colors.ts` 共用网页背景识别和对比度处理；内容脚本在方案或系统明暗变化时原地更新已渲染的双色译文，包括段落翻译和图片段落，不重新发送翻译请求。旧自定义方案缺少组件颜色时从原有界面色补齐。
+
+`tests/appearance.test.ts`、`tests/options-appearance.test.ts` 和 `tests/translation-appearance.test.ts` 覆盖旧设置兼容、异常色值、系统切换、方案复制与删除、草稿保存、输入校验及双色译文更新。`npm run test:appearance` 构建后使用可选 Playwright 与 Chromium 检查实际组件配色、保存重开、译文换色不增加请求以及窄屏布局，支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`，报告保存在 `.npm-cache/appearance/`。
+
+### 划词翻译回归验证
+
+划词设置在 `src/shared/dictionary.ts` 归一化，`src/content/selection-translation.ts` 负责选区入口与隔离样式的结果卡片。简单规则只将不超过 100 字符的单个字母词（允许词内连字符和撇号）交给词典；空释义、多词、句子及中日韩文本使用现有 `TRANSLATE_BATCH`，沿用当前服务、语言、缓存及本地翻译设置，选区上限为 5,000 字符。词典请求失败保留重试，不能作为未收录结果回退。后台固定访问有道和 Bing 的词典端点，词条适配在 `src/dictionary/parsers.ts`；Bing HTML 在共享扩展运行页的惰性模板中解析，不执行或挂载远程页面内容。发音下载有来源、类型、大小和超时限制，由扩展运行页播放；词典请求不携带网页上下文或 Cookie，查词结果不写入翻译缓存。
+
+- 原文使用卡片内的文本框编辑，按钮或 `Ctrl+Enter` 提交，普通回车保留换行。输入立即使旧请求结果失效并停止发音，但不发起新请求；重新提交沿用当前词典及翻译服务分流，不修改网页正文。文本框聚焦时展开，内部滚动不关闭卡片。
+- 单元测试覆盖旧配置兼容、两种词条结构、单词分流、未收录回退、直接翻译、当前语言与本地服务复用、长文本与换行、原文编辑与重新提交、输入校验、无效响应、音频来源限制、跨行入口、编辑区域排除和异步结果失效。
+- `npm run test:selection`：构建后加载实际 Chromium MV3 扩展，使用本地网页、模拟词典和有效音频验证两家服务、设置保存、原生鼠标划词、跨行下划线、窄屏定位、失败状态，以及页面禁止音频时的扩展内播放。使用独立浏览器资料目录，支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`，报告与截图保存在 `.npm-cache/selection-translation/`。
 
 ### 图片翻译回归验证
 
@@ -140,7 +163,7 @@ OpenCV 4.10 的构建文件还会移除旧 Emscripten 的 demangler 选项及文
 
 复杂 PDF 的浏览器回归样本、执行方式和覆盖边界见 [PDF 排版回归](pdf-regression.md)。
 
-构建后运行 `npm run test:pdf-scope` 可验证阅读范围调度。需要可选的 Playwright 与 Chromium，支持以下 GitHub 排版测试相同的环境变量。测试加载真实扩展，使用本地 40 页 PDF 和模拟翻译服务，验证滚动自动补译、快速跳页、重叠范围与手动编辑保留、设置切换，以及导出不触发全文翻译。报告保存在 `.npm-cache/pdf-scope/`。
+构建后运行 `npm run test:pdf-scope` 可验证阅读范围调度。需要可选的 Playwright 与 Chromium，支持以下 GitHub 排版测试相同的环境变量。测试加载真实扩展，使用本地 40 页 PDF 和模拟翻译服务，验证选择文件、拖放、输入地址及切换文档后的默认自动翻译、滚动自动补译、快速跳页、重叠范围与手动编辑保留、设置切换，以及下载前补全全文翻译、直接下载与重复导出复用。手动调度与直接下载场景显式使用 `translate=0` 隔离自动启动。`tests/pdf-download.test.ts` 另覆盖切换语言、空白页、翻译失败或响应不完整后的下载拦截与重试，以及切换文档时取消下载。报告保存在 `.npm-cache/pdf-scope/`。
 
 ### GitHub 代码注释排版回归
 

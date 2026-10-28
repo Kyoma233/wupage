@@ -15,11 +15,11 @@
 
 ## 发布流程
 
-推送 `v*` 标签会触发 GitHub Actions：校验 `package.json`、`package-lock.json` 与扩展 Manifest 的版本，执行类型检查和测试，构建扩展，并发布 ZIP 与 SHA-256 校验文件。
+推送 `v*` 标签会触发 GitHub Actions：校验 `package.json`、`package-lock.json` 与扩展 Manifest 的版本，执行类型检查和测试，构建扩展，并发布 ZIP。Release 不再附加独立的 `.sha256` 文件，校验值使用 GitHub 为每个附件生成并显示的 SHA-256 digest。
 
 商店自动提交策略由 `scripts/publish-policy.py` 决定：仅稳定的 `v<major>.<minor>.0`（例如 `v1.4.0`、`v2.0.0`）自动调用已配置的 Edge、Firefox 商店工作流。补丁版本（例如 `v1.3.1`）仍构建全部安装包、创建 GitHub Release 并同步网站，但跳过自动商店提交；预发布版本也不自动提交。需要提交补丁版本时，在对应商店工作流的 **Run workflow** 中手动指定已发布标签；Firefox 需取消 `dry_run` 才实际提交。手动入口不受自动策略限制。
 
-Chrome 与 Edge 共用 `npm run build` 生成的 Chromium MV3 构建（`dist/`），分别发布 `wupage-<version>-chrome.zip`、`wupage-<version>-edge.zip` 及各自的 SHA-256 文件。两者 ZIP 根目录均为 Manifest 所在目录，不含 source map；Edge 商店提交流程仍读取 `edge.zip`。
+Chrome 与 Edge 共用 `npm run build` 生成的 Chromium MV3 构建（`dist/`），分别发布 `wupage-<version>-chrome.zip`、`wupage-<version>-edge.zip`。两者 ZIP 根目录均为 Manifest 所在目录，不含 source map；Edge 商店提交流程仍读取 `edge.zip`。
 
 稳定版的三个版本号必须保持一致。以 `v1.1.0` 为例：
 
@@ -45,7 +45,7 @@ git push origin main v1.1.0
 
 `npm run build:firefox` 从共享 Manifest 生成 `dist-firefox/`，最低 Firefox 154。`browser_specific_settings.gecko.id` 固定为 `wupage@mr-wuliu.github.io`，正式提交 AMO 后不得随意变更。数据传输声明包含 `websiteContent` 和 `authenticationInfo`，后者对应用户配置后发送给服务商的 API 凭据；功能的数据处理行为变化时须同步检查声明。
 
-标签发布会同时生成 `wupage-<version>-firefox.zip`、`wupage-<version>-firefox-source.zip` 和 SHA-256 文件。源码包由 `scripts/package-firefox-source.py` 从指定 Git 提交生成，并附英文构建与审核说明；不包含依赖目录、测试资料目录和凭据。GitHub Release 中的 Firefox ZIP 未经 Mozilla 签名，不等同于可长期安装的商店版本；正式安装和更新通过 AMO 分发。
+标签发布会同时生成 `wupage-<version>-firefox.zip`、`wupage-<version>-firefox-source.zip`。源码包由 `scripts/package-firefox-source.py` 从指定 Git 提交生成，并附英文构建与审核说明；不包含依赖目录、测试资料目录和凭据。GitHub Release 中的 Firefox ZIP 未经 Mozilla 签名，不等同于可长期安装的商店版本；正式安装和更新通过 AMO 分发。
 
 ### 自动同步到 Firefox Add-ons（AMO）
 
@@ -60,7 +60,7 @@ git push origin main v1.1.0
 | Secret | `AMO_JWT_SECRET` | AMO 显示的 JWT secret / API secret |
 
 - 符合自动提交策略的 GitHub Release 创建后，Firefox 工作流与 Edge 提交、网站同步分别执行；某一个失败不阻止其他流程。未配置 `AMO_ADDON_ID` 时跳过自动提交；配置后缺少密钥会明确报错。预发布版本不提交商店。
-- 工作流直接下载已有 Release 的 Firefox ZIP、源码 ZIP 及其校验文件，不重新构建或重新打包。检查 SHA-256、Manifest 的版本和 Gecko ID、源码内三个版本及根包版本，以及 `SOURCE_REVISION.txt` 与标签实际 Git 提交的一致性。
+- 工作流直接下载已有 Release 的 Firefox ZIP、源码 ZIP，不重新构建或重新打包。`scripts/publish-checksums.py` 从 GitHub Release API 的附件 digest 生成仅供本次运行使用的临时校验文件；缺失或无效的 SHA-256 digest 会中止提交，不依赖 Release 中的 `.sha256` 附件。检查 SHA-256、Manifest 的版本和 Gecko ID、源码内三个版本及根包版本，以及 `SOURCE_REVISION.txt` 与标签实际 Git 提交的一致性。
 - 提交前通过认证 API 检查现有条目及全部公开渠道版本（包括待审版本）。同版本已公开或待审且有源码时直接跳过，不覆盖文件或修改审核；其他待审版本、已拒绝/禁用版本、缺源码或版本倒退会要求人工处理。首次审核尚未通过时不会提交新版本。
 - 上传 ZIP 后等待 AMO 自动校验通过，再在同一次创建版本请求中上传配套源码和英文审核备注。更新沿用上一版许可证，商店元数据仍在 AMO 后台维护。密钥始终只放在 GitHub Secrets，不得写入仓库、日志或审核备注。
 - 在 GitHub **Actions → Publish to Firefox Add-ons → Run workflow** 输入已有正式版标签可单独试跑或重试。`dry_run` 默认勾选：只验证发布产物；如果两项密钥都存在，还会检查账号权限和现有版本，全程不上传、不修改 AMO。未配置密钥时试跑成功仅表示本地产物检查通过。
@@ -84,7 +84,7 @@ git push origin main v1.1.0
 | Secret | `EDGE_CLIENT_ID` | Publish API 提供的 Client ID |
 | Secret | `EDGE_API_KEY` | Publish API 提供的 API Key |
 
-推送符合自动提交策略的正式版 `v<major>.<minor>.0` 标签后：工作流创建 GitHub Release 后，直接调用商店发布工作流，下载该 Release 的原始 ZIP 与 SHA-256 校验文件，验证校验和及 Manifest 版本，上传 ZIP，等待上传成功，再提交微软审核并检查提交结果。使用的是 v1.1 的 API Key 认证（`Authorization: ApiKey ...`、`X-ClientID`），无需配置旧版 Access Token URL 或 Client Secret。
+推送符合自动提交策略的正式版 `v<major>.<minor>.0` 标签后：工作流创建 GitHub Release 后，直接调用商店发布工作流，下载该 Release 的原始 ZIP，通过 `scripts/publish-checksums.py` 从 GitHub 附件 digest 生成临时 SHA-256 校验文件，验证校验和及 Manifest 版本，上传 ZIP，等待上传成功，再提交微软审核并检查提交结果。使用的是 v1.1 的 API Key 认证（`Authorization: ApiKey ...`、`X-ClientID`），无需配置旧版 Access Token URL 或 Client Secret。
 
 - 未配置 `EDGE_PRODUCT_ID` 时自动跳过商店提交；配置后缺少凭据会明确报错。预发布版本不提交商店。
 - 商店发布与网站同步分别执行；GitHub Release 已创建时，网站同步失败不会阻止商店提交。

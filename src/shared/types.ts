@@ -1,3 +1,6 @@
+import type { DictionaryProvider, SelectionTranslationSettings } from "./dictionary";
+import type { AppearanceSettings } from "./appearance";
+
 export type ProviderType =
   | "firefox-local"
   | "microsoft-web-translate"
@@ -82,7 +85,19 @@ export interface GoogleCloudTranslationConfig extends ProviderBaseConfig {
   apiKey: string;
 }
 
-export interface OpenAICompatibleConfig extends ProviderBaseConfig {
+export interface LlmRequestTemplate {
+  enabled: boolean;
+  /** JSON object: string values override headers; null removes them. */
+  headers: string;
+  /** JSON merge patch applied to the generated request body. */
+  body: string;
+}
+
+export interface LlmProviderBaseConfig extends ProviderBaseConfig {
+  requestTemplate?: LlmRequestTemplate;
+}
+
+export interface OpenAICompatibleConfig extends LlmProviderBaseConfig {
   type: "openai-compatible";
   baseURL: string;
   apiKey: string;
@@ -92,7 +107,7 @@ export interface OpenAICompatibleConfig extends ProviderBaseConfig {
   ollamaCompatibility?: boolean;
 }
 
-export interface AnthropicCompatibleConfig extends ProviderBaseConfig {
+export interface AnthropicCompatibleConfig extends LlmProviderBaseConfig {
   type: "anthropic-compatible";
   baseURL: string;
   apiKey: string;
@@ -100,7 +115,7 @@ export interface AnthropicCompatibleConfig extends ProviderBaseConfig {
   systemPrompt: string;
 }
 
-export interface DeepSeekConfig extends ProviderBaseConfig {
+export interface DeepSeekConfig extends LlmProviderBaseConfig {
   type: "deepseek";
   baseURL: string;
   apiKey: string;
@@ -108,7 +123,7 @@ export interface DeepSeekConfig extends ProviderBaseConfig {
   systemPrompt: string;
 }
 
-export interface ZhipuGlmConfig extends ProviderBaseConfig {
+export interface ZhipuGlmConfig extends LlmProviderBaseConfig {
   type: "zhipu-glm";
   baseURL: string;
   apiKey: string;
@@ -147,6 +162,8 @@ export type DualServiceProviderConfig = Extract<ProviderConfig, DualServiceConfi
 }>;
 
 export interface ExtensionSettings {
+  appearance?: AppearanceSettings;
+  selectionTranslation?: SelectionTranslationSettings;
   autoTranslation?: AutoTranslationSettings;
   targetLang: string;
   sourceLang: string;
@@ -260,6 +277,9 @@ export interface TranslatorProvider {
 }
 
 export type RuntimeRequest =
+  | { type: "LOOKUP_DICTIONARY"; query: string; provider: DictionaryProvider }
+  | { type: "PLAY_DICTIONARY_AUDIO"; provider: DictionaryProvider; url: string }
+  | { type: "STOP_DICTIONARY_AUDIO" }
   | { type: "GET_LOCAL_MODEL_STATUS" }
   | { type: "INSTALL_LOCAL_MODEL"; modelId: string }
   | { type: "CANCEL_LOCAL_MODEL_DOWNLOAD" }

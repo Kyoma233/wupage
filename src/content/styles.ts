@@ -171,7 +171,7 @@ export function injectContentStyles(): void {
       height: 0.9em;
       box-sizing: border-box;
       border: 2px solid rgba(15, 118, 110, 0.22);
-      border-top-color: #0f766e;
+      border-top-color: var(--wp-accent, #0f766e);
       border-radius: 999px;
       vertical-align: -0.12em;
       animation: wupage-spin 780ms linear infinite;
@@ -233,8 +233,8 @@ export function injectContentStyles(): void {
       border-radius: 999px;
       display: grid;
       place-items: center;
-      color: #ffffff;
-      background: #116466;
+      color: var(--wp-floating-foreground, #ffffff);
+      background: var(--wp-floating-background, #116466);
       box-shadow: 0 8px 24px rgba(15, 35, 38, 0.22);
       appearance: none;
       cursor: pointer;
@@ -253,7 +253,7 @@ export function injectContentStyles(): void {
     #wupage-floating-ball > .wupage-floating-label {
       all: initial;
       display: block;
-      color: #ffffff;
+      color: var(--wp-floating-foreground, #ffffff);
       font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
       font-size: 16px;
       font-style: normal !important;
@@ -270,16 +270,16 @@ export function injectContentStyles(): void {
     }
 
     #wupage-floating-ball:hover {
-      background: #0f5557;
+      background: var(--wp-floating-hover, #0f5557);
     }
 
     #wupage-floating-ball:focus-visible {
-      outline: 3px solid #69b8ac;
+      outline: 3px solid var(--wp-floating-background, #69b8ac);
       outline-offset: 3px;
     }
 
     #wupage-floating-ball.is-loading {
-      box-shadow: 0 0 0 3px rgba(17, 100, 102, 0.2), 0 8px 24px rgba(15, 35, 38, 0.22);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--wp-floating-background, #116466) 25%, transparent), 0 8px 24px rgba(15, 35, 38, 0.22);
     }
 
     #wupage-floating-ball.is-dragging {
@@ -309,6 +309,7 @@ export function injectContentStyles(): void {
 
     #wupage-floating-menu {
       all: initial;
+      color-scheme: var(--wp-color-scheme, light);
       position: fixed !important;
       z-index: 2147483647;
       display: block;
@@ -319,12 +320,12 @@ export function injectContentStyles(): void {
       overflow-y: auto;
       overscroll-behavior: contain;
       padding: 10px;
-      border: 1px solid rgba(31, 42, 46, 0.12);
+      border: 1px solid var(--wp-border, rgba(31, 42, 46, 0.12));
       border-radius: 14px;
-      background: #ffffff;
+      background: var(--wp-surface, #ffffff);
       box-shadow: 0 12px 30px rgba(15, 35, 38, 0.2);
       font: 13px/1.3 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #172026;
+      color: var(--wp-foreground, #172026);
       direction: ltr;
       text-align: left;
       font-synthesis: none;
@@ -351,7 +352,7 @@ export function injectContentStyles(): void {
       border: 0;
       border-radius: 6px;
       padding: 0 10px;
-      color: #172026;
+      color: var(--wp-foreground, #172026);
       background: transparent;
       text-align: left;
       font: inherit;
@@ -362,11 +363,11 @@ export function injectContentStyles(): void {
     }
 
     #wupage-floating-menu button:hover {
-      background: #e8f1ef;
+      background: var(--wp-selected, #e8f1ef);
     }
 
     #wupage-floating-menu button:focus-visible {
-      outline: 2px solid #69b8ac;
+      outline: 2px solid var(--wp-accent, #69b8ac);
       outline-offset: 2px;
     }
 
@@ -376,8 +377,8 @@ export function injectContentStyles(): void {
     }
 
     #wupage-floating-menu button[aria-pressed="true"] {
-      color: #0f5557;
-      background: #d9efea;
+      color: var(--wp-accent, #0f5557);
+      background: var(--wp-selected, #d9efea);
       font-weight: 700;
     }
 
@@ -388,16 +389,16 @@ export function injectContentStyles(): void {
       width: calc(100% - 8px);
       min-height: 40px;
       margin: 4px;
-      border: 1px solid #116466;
-      color: #ffffff;
-      background: #116466;
+      border: 1px solid var(--wp-accent, #116466);
+      color: var(--wp-on-accent, #ffffff);
+      background: var(--wp-accent, #116466);
       text-align: center;
       font-weight: 700;
     }
 
     #wupage-floating-menu button[data-action="page-toggle"]:hover {
-      border-color: #0f5557;
-      background: #0f5557;
+      border-color: var(--wp-accent, #0f5557);
+      background: var(--wp-accent-hover, #0f5557);
     }
 
     #wupage-floating-menu button[data-action="page-toggle"]:focus-visible {
@@ -419,7 +420,7 @@ export function injectContentStyles(): void {
 
     #wupage-floating-menu .wupage-menu-header strong {
       font: 700 15px/1.4 system-ui, sans-serif;
-      color: #116466;
+      color: var(--wp-accent, #116466);
     }
 
     #wupage-floating-menu .wupage-menu-header button,
@@ -429,14 +430,14 @@ export function injectContentStyles(): void {
       flex: 0 0 auto;
       min-height: 28px;
       padding: 0 6px;
-      color: #116466;
+      color: var(--wp-accent, #116466);
       font-size: 12px;
     }
 
     #wupage-floating-menu .wupage-field-label {
       display: block;
       margin: 0 0 6px;
-      color: #647379;
+      color: var(--wp-muted, #647379);
       font: 12px/1.4 system-ui, sans-serif;
       text-align: left;
     }
@@ -471,7 +472,7 @@ export function injectContentStyles(): void {
       gap: 3px;
       padding: 3px;
       border-radius: 8px;
-      background: #eef2f1;
+      background: var(--wp-soft, #eef2f1);
     }
 
     #wupage-floating-menu .wupage-display-modes button {
@@ -482,7 +483,7 @@ export function injectContentStyles(): void {
     }
 
     #wupage-floating-menu .wupage-display-modes button[aria-pressed="true"] {
-      background: #ffffff;
+      background: var(--wp-surface, #ffffff);
       box-shadow: 0 1px 3px rgba(15, 35, 38, 0.1);
     }
 
@@ -493,18 +494,25 @@ export function injectContentStyles(): void {
     #wupage-floating-menu [data-role="translation-status"],
     #wupage-floating-menu .wupage-menu-hint {
       margin: 0;
-      color: #647379;
+      color: var(--wp-muted, #647379);
       font: 12px/1.6 system-ui, sans-serif;
       white-space: normal;
       overflow-wrap: anywhere;
     }
 
     #wupage-floating-menu [data-role="translation-status"][data-tone="error"] {
-      color: #b13e36;
+      color: var(--wp-danger, #b13e36);
     }
 
     #wupage-floating-menu .wupage-menu-hint {
       padding: 2px 10px 4px;
+    }
+
+    @media (any-hover: none) and (any-pointer: coarse) {
+      #wupage-floating-menu [data-action="paragraph-mode"],
+      #wupage-floating-menu .wupage-menu-hint {
+        display: none !important;
+      }
     }
 
     #wupage-floating-menu .wupage-menu-footer {
@@ -514,7 +522,7 @@ export function injectContentStyles(): void {
       justify-content: flex-end;
       gap: 4px;
       padding: 0 4px;
-      color: #647379;
+      color: var(--wp-muted, #647379);
       font-size: 11px;
     }
 
@@ -566,7 +574,7 @@ export function injectContentStyles(): void {
       border-radius: 8px;
       padding: 0 24px 0 10px !important;
       color: transparent !important;
-      background: #eef2f1;
+      background: var(--wp-soft, #eef2f1);
       font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       letter-spacing: normal !important;
       text-align: left !important;
@@ -583,8 +591,8 @@ export function injectContentStyles(): void {
     }
 
     #wupage-floating-menu .wupage-language-select select option {
-      color: #26343a !important;
-      background: #ffffff !important;
+      color: var(--wp-foreground, #26343a) !important;
+      background: var(--wp-surface, #ffffff) !important;
       font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
@@ -600,7 +608,7 @@ export function injectContentStyles(): void {
       margin: 0 !important;
       padding: 0 24px 0 8px !important;
       overflow: hidden !important;
-      color: #26343a;
+      color: var(--wp-foreground, #26343a);
       font: 500 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       letter-spacing: normal !important;
       text-align: center !important;
@@ -614,8 +622,8 @@ export function injectContentStyles(): void {
 
     #wupage-floating-menu .wupage-language-select select:hover,
     #wupage-floating-menu .wupage-language-select select:focus-visible {
-      border-color: #aebbb7;
-      background: #ffffff;
+      border-color: var(--wp-border, #aebbb7);
+      background: var(--wp-surface, #ffffff);
     }
 
     #wupage-floating-menu .wupage-language-chevron {
@@ -629,8 +637,8 @@ export function injectContentStyles(): void {
       height: 5px !important;
       margin: 0 !important;
       padding: 0 !important;
-      border-right: 2px solid #7d898e;
-      border-bottom: 2px solid #7d898e;
+      border-right: 2px solid var(--wp-muted, #7d898e);
+      border-bottom: 2px solid var(--wp-muted, #7d898e);
       box-sizing: content-box;
       transform: translateY(-65%) rotate(45deg) !important;
     }
@@ -645,7 +653,7 @@ export function injectContentStyles(): void {
       align-self: center !important;
       margin: 0 !important;
       padding: 0 !important;
-      color: #116466;
+      color: var(--wp-accent, #116466);
       font: 17px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       text-align: center !important;
       transform: none !important;
@@ -694,7 +702,7 @@ export function injectContentStyles(): void {
       width: 32px;
       height: 24px;
       border-radius: 8px;
-      background: #d5dde0;
+      background: var(--wp-border, #d5dde0);
       transition: background 160ms ease;
     }
 
@@ -705,13 +713,13 @@ export function injectContentStyles(): void {
       width: 18px;
       height: 18px;
       border-radius: 6px;
-      background: #ffffff;
+      background: var(--wp-surface, #ffffff);
       box-shadow: 0 1px 3px rgba(15, 35, 38, 0.24);
       transition: transform 160ms ease;
     }
 
     #wupage-floating-menu .wupage-switch-row[aria-pressed="true"] .wupage-switch {
-      background: #116466;
+      background: var(--wp-accent, #116466);
     }
 
     #wupage-floating-menu .wupage-switch-row[aria-pressed="true"] .wupage-switch span {
@@ -719,7 +727,7 @@ export function injectContentStyles(): void {
     }
 
     .wupage-paragraph-active {
-      outline: 1px dashed rgba(17, 100, 102, 0.45);
+      outline: 1px dashed color-mix(in srgb, var(--wp-paragraph-highlight, #116466) 45%, transparent);
       outline-offset: 3px;
     }
 
@@ -727,10 +735,10 @@ export function injectContentStyles(): void {
       position: fixed;
       z-index: 2147483646;
       box-sizing: border-box;
-      border: 1px dashed rgba(17, 100, 102, 0.68);
+      border: 1px dashed color-mix(in srgb, var(--wp-paragraph-highlight, #116466) 68%, transparent);
       border-radius: 4px;
       pointer-events: none;
-      background: rgba(17, 100, 102, 0.035);
+      background: color-mix(in srgb, var(--wp-paragraph-highlight, #116466) 5%, transparent);
     }
 
     #wupage-paragraph-highlight[hidden] {
@@ -751,12 +759,12 @@ export function injectContentStyles(): void {
       box-sizing: border-box;
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr);
-      border: 1px solid rgba(31, 42, 46, 0.14);
+      border: 1px solid var(--wp-border, rgba(31, 42, 46, 0.14));
       border-radius: 8px;
       overflow: hidden;
-      background: #ffffff;
+      background: var(--wp-surface, #ffffff);
       box-shadow: 0 18px 44px rgba(15, 35, 38, 0.24);
-      color: #172026;
+      color: var(--wp-foreground, #172026);
       font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -770,8 +778,8 @@ export function injectContentStyles(): void {
       justify-content: space-between;
       gap: 10px;
       padding: 9px 10px;
-      border-bottom: 1px solid rgba(31, 42, 46, 0.1);
-      background: #f7faf9;
+      border-bottom: 1px solid var(--wp-border, rgba(31, 42, 46, 0.1));
+      background: var(--wp-soft, #f7faf9);
       cursor: grab;
       user-select: none;
       touch-action: none;
@@ -790,20 +798,20 @@ export function injectContentStyles(): void {
       height: 26px;
       border: 0;
       border-radius: 6px;
-      color: #405057;
+      color: var(--wp-muted, #405057);
       background: transparent;
       font: 18px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       cursor: pointer;
     }
 
     #wupage-debug-panel header button:hover {
-      background: #e8f1ef;
+      background: var(--wp-selected, #e8f1ef);
     }
 
     #wupage-debug-panel .wupage-debug-summary {
       padding: 8px 10px;
-      border-bottom: 1px solid rgba(31, 42, 46, 0.08);
-      color: #52636a;
+      border-bottom: 1px solid var(--wp-border, rgba(31, 42, 46, 0.08));
+      color: var(--wp-muted, #52636a);
     }
 
     #wupage-debug-panel .wupage-debug-list {
@@ -828,8 +836,8 @@ export function injectContentStyles(): void {
       position: absolute;
       right: 4px;
       bottom: 4px;
-      border-right: 2px solid #87959a;
-      border-bottom: 2px solid #87959a;
+      border-right: 2px solid var(--wp-muted, #87959a);
+      border-bottom: 2px solid var(--wp-muted, #87959a);
     }
 
     #wupage-debug-panel .wupage-debug-resize::before {
@@ -848,7 +856,7 @@ export function injectContentStyles(): void {
 
     #wupage-debug-panel .wupage-debug-empty {
       padding: 18px 8px;
-      color: #7a8a91;
+      color: var(--wp-muted, #7a8a91);
       text-align: center;
     }
 
@@ -856,10 +864,10 @@ export function injectContentStyles(): void {
       display: grid;
       gap: 4px;
       padding: 8px;
-      border: 1px solid rgba(31, 42, 46, 0.1);
-      border-left: 3px solid #9aa8ad;
+      border: 1px solid var(--wp-border, rgba(31, 42, 46, 0.1));
+      border-left: 3px solid var(--wp-muted, #9aa8ad);
       border-radius: 7px;
-      background: #ffffff;
+      background: var(--wp-surface, #ffffff);
     }
 
     #wupage-debug-panel .wupage-debug-task + .wupage-debug-task {
@@ -868,13 +876,21 @@ export function injectContentStyles(): void {
 
     #wupage-debug-panel .wupage-debug-task[data-status="running"],
     #wupage-debug-panel .wupage-debug-task[data-status="waiting"] {
-      border-left-color: #116466;
-      background: #f4fbf9;
+      border-left-color: var(--wp-accent, #116466);
+      background: var(--wp-soft, #f4fbf9);
     }
 
     #wupage-debug-panel .wupage-debug-task[data-status="failed"] {
-      border-left-color: #b42318;
-      background: #fff8f7;
+      border-left-color: var(--wp-danger, #b42318);
+      background: var(--wp-danger-soft, #fff8f7);
+    }
+
+    #wupage-debug-panel .wupage-debug-task[data-status="succeeded"] {
+      border-left-color: var(--wp-success, #25734c);
+    }
+
+    #wupage-debug-panel .wupage-debug-task[data-status="succeeded"] .wupage-debug-task-title span {
+      color: var(--wp-success, #25734c);
     }
 
     #wupage-debug-panel .wupage-debug-task-title {
@@ -900,18 +916,18 @@ export function injectContentStyles(): void {
 
     #wupage-debug-panel .wupage-debug-task-title span {
       flex: 0 0 auto;
-      color: #0f5557;
+      color: var(--wp-accent, #0f5557);
       font-weight: 700;
     }
 
     #wupage-debug-panel .wupage-debug-task-meta {
-      color: #5f6f75;
+      color: var(--wp-muted, #5f6f75);
     }
 
     #wupage-debug-panel .wupage-debug-task-error {
       max-height: 58px;
       overflow: auto;
-      color: #b42318;
+      color: var(--wp-danger, #b42318);
       word-break: break-word;
     }
 
@@ -920,7 +936,7 @@ export function injectContentStyles(): void {
       gap: 8px;
       margin-top: 6px;
       padding-top: 7px;
-      border-top: 1px solid rgba(31, 42, 46, 0.08);
+      border-top: 1px solid var(--wp-border, rgba(31, 42, 46, 0.08));
     }
 
     #wupage-debug-panel .wupage-debug-task[open] .wupage-debug-task-detail {
@@ -934,7 +950,7 @@ export function injectContentStyles(): void {
 
     #wupage-debug-panel .wupage-debug-text-block h4 {
       margin: 0;
-      color: #405057;
+      color: var(--wp-muted, #405057);
       font-size: 12px;
       line-height: 1.3;
     }
@@ -945,7 +961,7 @@ export function injectContentStyles(): void {
       padding: 6px;
       border-radius: 6px;
       background: rgba(31, 42, 46, 0.05);
-      color: #172026;
+      color: var(--wp-foreground, #172026);
       font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       white-space: pre-wrap;
       word-break: break-word;

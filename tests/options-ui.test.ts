@@ -164,7 +164,7 @@ describe("options provider controls", () => {
     });
     click("#test");
     await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toBe("测试通过：你好"));
-    expect(document.querySelector(".model-field [data-role='provider-test-status']")?.textContent).toBe("测试通过：你好");
+    expect(document.querySelector("#providerForm > [data-role='provider-test-status']")?.textContent).toBe("测试通过：你好");
     expect(sendMessage).toHaveBeenCalledWith({ type: "TEST_PROVIDER", providerId: "deepseek" });
     click("#providerTrigger");
     click("[data-action='select'][data-provider-id='google-web-translate']");

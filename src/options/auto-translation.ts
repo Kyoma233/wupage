@@ -1,7 +1,10 @@
 import { AUTO_TRANSLATION_PRESETS, normalizeAutoTranslation, normalizeSitePattern, setAutoTranslationEnabled } from "../shared/auto-translation";
 import type { AutoTranslationSettings, AutoTranslationSite } from "../shared/types";
 
-export function setupAutoTranslationControls(root: HTMLElement): {
+export function setupAutoTranslationControls(
+  root: HTMLElement,
+  revealInvalidField: (field: HTMLInputElement) => void = () => {}
+): {
   render: (value: AutoTranslationSettings | undefined) => void;
   read: () => AutoTranslationSettings;
 } {
@@ -11,6 +14,7 @@ export function setupAutoTranslationControls(root: HTMLElement): {
   const foreignOption = query<HTMLElement>("#autoTranslateNonTargetOption");
   const list = query<HTMLElement>("#autoTranslateSites");
   const message = query<HTMLElement>("#autoTranslateSiteStatus");
+  setupAutoTranslationHelp(root);
   let sites: Array<AutoTranslationSite & { preset?: string }> = [];
   const controls = new Map<string, HTMLInputElement>();
   let defaultLanguageRule = false;
@@ -112,7 +116,9 @@ export function setupAutoTranslationControls(root: HTMLElement): {
           patterns.add(pattern); return { ...site, pattern, enabled: checkbox?.checked ?? site.enabled };
         } catch (error) {
           const text = `第 ${index + 1} 行：${error instanceof Error ? error.message : String(error)} 请修改或用“−”删除该行。`;
-          message.textContent = text; controls.get(site.id)?.setAttribute("aria-invalid", "true"); controls.get(site.id)?.focus();
+          message.textContent = text;
+          const field = controls.get(site.id);
+          if (field) { field.setAttribute("aria-invalid", "true"); revealInvalidField(field); field.focus(); }
           throw new Error(text);
         }
       });
@@ -124,4 +130,37 @@ export function setupAutoTranslationControls(root: HTMLElement): {
         ...(removed.length ? { removedPresetSites: removed } : {}) };
     }
   };
+}
+
+function setupAutoTranslationHelp(root: HTMLElement): void {
+  const help = root.querySelector<HTMLElement>("#autoTranslateHelp");
+  const trigger = root.querySelector<HTMLButtonElement>("#autoTranslateHelpTrigger");
+  const panel = root.querySelector<HTMLElement>("#autoTranslateHelpPanel");
+  if (!help || !trigger || !panel) return;
+  const controller = new AbortController();
+  const options = { signal: controller.signal };
+  const position = () => {
+    if (panel.hidden) return;
+    const anchor = trigger.getBoundingClientRect();
+    const bounds = panel.getBoundingClientRect();
+    panel.style.left = `${Math.max(12, Math.min(anchor.left, window.innerWidth - bounds.width - 12))}px`;
+    const top = anchor.bottom + 8 + bounds.height <= window.innerHeight - 12
+      ? anchor.bottom + 8 : anchor.top - bounds.height - 8;
+    panel.style.top = `${Math.max(12, top)}px`;
+  };
+  const show = () => { panel.hidden = false; position(); };
+  const hide = () => {
+    if (!help.matches(":hover") && !help.contains(document.activeElement)) panel.hidden = true;
+  };
+  help.addEventListener("mouseenter", show, options);
+  help.addEventListener("mouseleave", hide, options);
+  help.addEventListener("focusin", show, options);
+  help.addEventListener("focusout", () => queueMicrotask(hide), options);
+  trigger.addEventListener("click", show, options);
+  trigger.addEventListener("keydown", event => {
+    if (event.key === "Escape") { panel.hidden = true; trigger.blur(); event.stopPropagation(); }
+  }, options);
+  window.addEventListener("resize", position, options);
+  window.addEventListener("scroll", position, { ...options, capture: true });
+  window.addEventListener("pagehide", event => { if (!event.persisted) controller.abort(); }, options);
 }

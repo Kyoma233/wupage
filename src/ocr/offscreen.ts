@@ -1,6 +1,7 @@
 import { OCR_CACHE, OCR_DOWNLOAD_BYTES, type OcrLine, type OcrStatus } from "../shared/ocr";
 import { commitModels, downloadModels, installedRevision, readModelBuffers } from "./model-store";
 import "../local/offscreen";
+import "../dictionary/runtime";
 import { withInferenceLifetime } from "../shared/inference-lifetime";
 
 let state: OcrStatus = { state: "missing", downloaded: 0, total: OCR_DOWNLOAD_BYTES };

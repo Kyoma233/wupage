@@ -53,25 +53,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, re, subprocess
-          tag = os.environ['RELEASE_TAG']
-          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
-              raise SystemExit('Only stable v<major>.<minor>.<patch> releases can be submitted.')
-          release = json.loads(subprocess.check_output([
-              'gh', 'release', 'view', tag, '--repo', os.environ['GITHUB_REPOSITORY'],
-              '--json', 'tagName,isDraft,isPrerelease',
-          ], text=True))
-          if release['tagName'] != tag or release['isDraft'] or release['isPrerelease']:
-              raise SystemExit('The requested GitHub Release must be published and stable.')
-          PY
           version="${RELEASE_TAG#v}"
+          python3 scripts/publish-checksums.py "$RELEASE_TAG" \
+            "release/wupage-${version}-firefox.zip" \
+            "release/wupage-${version}-firefox-source.zip"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "wupage-${version}-firefox.zip" \
-            --pattern "wupage-${version}-firefox.zip.sha256" \
             --pattern "wupage-${version}-firefox-source.zip" \
-            --pattern "wupage-${version}-firefox-source.zip.sha256" \
             --dir release
           commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq '.sha')"
           echo "RELEASE_COMMIT=$commit" >> "$GITHUB_ENV"

@@ -65,4 +65,13 @@ describe("image regions and loading", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { headers: { "Content-Type": "image/png", "Content-Length": String(13 * 1024 * 1024) } })));
     await expect(loadImageData("https://mail.example/image")).rejects.toThrow("过大");
   });
+
+  it.each(["image/avif", "IMAGE/AVIF; charset=binary"])("loads Bilibili AVIF covers served as %s", async (mime) => {
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([0, 0, 0, 32, 102, 116, 121, 112, 97, 118, 105, 102]),
+      { headers: { "Content-Type": mime } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const url = "https://i0.hdslb.com/bfs/archive/cover.jpg@672w_378h_1c_!web-video-rcmd-cover.avif";
+    expect(await loadImageData(url)).toEqual({ dataUrl: "data:image/avif;base64,AAAAIGZ0eXBhdmlm" });
+    expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ credentials: "include" }));
+  });
 });

@@ -107,8 +107,6 @@ jobs:
               echo "The $browser ZIP package must contain manifest.json at its root."
               exit 1
             fi
-
-            (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
           done
 
       - name: Package unsigned Firefox extension for testing
@@ -121,21 +119,18 @@ jobs:
             echo "The Firefox ZIP must contain manifest.json at its root."
             exit 1
           fi
-          (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
 
       - name: Package matching Firefox source for AMO review
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/package-firefox-source.py --output release
-          archive_name="wupage-${RELEASE_VERSION}-firefox-source.zip"
-          (cd release && sha256sum "$archive_name" > "${archive_name}.sha256")
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: wupage-${{ github.ref_name }}-browsers
-          path: release/*
+          path: release/*.zip
           if-no-files-found: error
 
       - name: Create or update GitHub Release
@@ -146,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+            gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber
             if [[ "$RELEASE_VERSION" == *-* ]]; then
               gh release edit "$GITHUB_REF_NAME" --prerelease
             fi
@@ -155,7 +150,7 @@ jobs:
             if [[ "$RELEASE_VERSION" == *-* ]]; then
               release_flags+=(--prerelease)
             fi
-            gh release create "$GITHUB_REF_NAME" release/* \
+            gh release create "$GITHUB_REF_NAME" release/*.zip \
               --verify-tag \
               --generate-notes \
               --title "WuPage $GITHUB_REF_NAME" \

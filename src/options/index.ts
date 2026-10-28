@@ -10,6 +10,15 @@ import { setupLocalModelControl } from "../local/control";
 import { ensureProviderIconStyles, providerIconMarkup } from "../shared/provider-icons";
 import { setupAutoTranslationControls } from "./auto-translation";
 import { renderProviderUsage, updateProviderScheduling } from "./provider-usage";
+import { setupSettingsNavigation } from "./navigation";
+import { setupAppearanceControls } from "./appearance";
+import "../shared/appearance.css";
+import { normalizeSelectionTranslation, type DictionaryProvider, type SelectionTriggerStyle } from "../shared/dictionary";
+import { RequestTemplateError, supportsRequestTemplate, validateRequestTemplate } from "../shared/request-template";
+import { readRequestTemplate, setupProviderTabs } from "./provider-advanced";
+
+const settingsNavigation = setupSettingsNavigation(query<HTMLElement>(".settings"));
+const appearanceControls = setupAppearanceControls(query<HTMLElement>("#appearanceSettings"));
 
 const targetLang = query<HTMLSelectElement>("#targetLang");
 const sourceLang = query<HTMLSelectElement>("#sourceLang");
@@ -21,6 +30,10 @@ const pdfTranslationPageRadiusField = query<HTMLElement>("#pdfTranslationPageRad
 const pdfTranslationScopeDescription = query<HTMLElement>("#pdfTranslationScopeDescription");
 const cacheEnabled = query<HTMLInputElement>("#cacheEnabled");
 const floatingBallEnabled = query<HTMLInputElement>("#floatingBallEnabled");
+const selectionTranslationEnabled = query<HTMLInputElement>("#selectionTranslationEnabled");
+const selectionTranslationFields = query<HTMLFieldSetElement>("#selectionTranslationFields");
+const selectionDictionary = query<HTMLSelectElement>("#selectionDictionary");
+const selectionTriggerStyle = query<HTMLSelectElement>("#selectionTriggerStyle");
 const imageTranslationEnabled = query<HTMLInputElement>("#imageTranslationEnabled");
 const translateCodeComments = query<HTMLInputElement>("#translateCodeComments");
 const translationDisplayMode = query<HTMLSelectElement>("#translationDisplayMode");
@@ -46,7 +59,12 @@ const customLlmFormat = query<HTMLSelectElement>("#customLlmFormat");
 const saveButton = query<HTMLButtonElement>("#save");
 const restoreButton = query<HTMLButtonElement>("#restore");
 const status = query<HTMLParagraphElement>("#status");
-const autoTranslationControls = setupAutoTranslationControls(query<HTMLElement>("#autoTranslationSettings"));
+const autoTranslationControls = setupAutoTranslationControls(
+  query<HTMLElement>("#autoTranslationSettings"), field => {
+    settingsNavigation.reveal(field);
+    field.scrollIntoView?.({ block: "center" });
+  }
+);
 
 const LLM_MODEL_OPTIONS = [
   "gpt-4o-mini",
@@ -67,6 +85,7 @@ const DEFAULT_LLM_PROMPT =
   "You are a translation engine. Translate each input item into {{targetLang}}. Preserve meaning, numbers, links, code-like tokens, placeholders like ⟪WUPAGE0⟫, and formatting. Return only a JSON array of strings in the same order.";
 
 let settings: ExtensionSettings;
+let editingProviderId: string | undefined;
 let disposeLocalControl: (() => void) | undefined;
 let activeProviderTest: { providerId: string; status: HTMLElement; message: string } | undefined;
 
@@ -81,7 +100,10 @@ async function init(): Promise<void> {
   const imageNotice = new URLSearchParams(location.search).get("imageTranslationNotice");
   if (imageNotice === "setup") setStatus("使用右键图片翻译前，请先点击扳手安装 OCR 模型，开启图片翻译并保存。");
   if (imageNotice === "refresh") setStatus("无法连接图片所在页面。请刷新刚才的网页，再右键点击图片翻译；部分嵌入页面暂不支持。");
-  if (imageNotice) imageTranslationEnabled.closest(".image-feature")?.scrollIntoView?.({ block: "center" });
+  if (imageNotice) {
+    settingsNavigation.reveal(imageTranslationEnabled);
+    imageTranslationEnabled.closest(".image-feature")?.scrollIntoView?.({ block: "center" });
+  }
 
   providerTrigger.addEventListener("click", () => setProviderMenuOpen(providerMenu.hidden));
   providerMenu.addEventListener("click", (event) => {
@@ -100,7 +122,7 @@ async function init(): Promise<void> {
   });
   query<HTMLButtonElement>("#cancelModel").addEventListener("click", () => modelDialog.close());
   modelAction.addEventListener("change", () => {
-    const provider = getActiveProvider();
+    const provider = getEditingProvider();
     customModelName.value = modelAction.value === "edit" && "model" in provider ? provider.model : "";
     customModelName.focus();
   });
@@ -138,6 +160,7 @@ async function init(): Promise<void> {
 }
 
 function render(): void {
+  appearanceControls.render(settings.appearance);
   autoTranslationControls.render(settings.autoTranslation);
   renderLanguageOptions(targetLang, settings.targetLang, TARGET_LANGUAGES);
   renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
@@ -148,6 +171,11 @@ function render(): void {
   updatePdfTranslationScope();
   cacheEnabled.checked = settings.cacheEnabled;
   floatingBallEnabled.checked = settings.floatingBallEnabled;
+  const selection = normalizeSelectionTranslation(settings.selectionTranslation);
+  selectionTranslationEnabled.checked = selection.enabled;
+  selectionTranslationFields.disabled = !selection.enabled;
+  selectionDictionary.value = selection.provider;
+  selectionTriggerStyle.value = selection.style;
   setImageTranslationToggle(imageTranslationEnabled, settings.imageTranslationEnabled === true);
   translateCodeComments.checked = settings.translateCodeComments;
   translationDisplayMode.innerHTML = TRANSLATION_DISPLAY_MODES
@@ -160,6 +188,7 @@ function render(): void {
 }
 
 translationDisplayMode.addEventListener("change", updateTranslationDisplayModeDescription);
+selectionTranslationEnabled.addEventListener("change", () => { selectionTranslationFields.disabled = !selectionTranslationEnabled.checked; });
 
 function updatePdfTranslationScope(): void {
   pdfTranslationPageRadiusField.hidden = pdfTranslationScope.value === "unlimited";
@@ -191,9 +220,10 @@ function renderLanguageOptions(
 
 function renderProviderPicker(keepOpen: boolean): void {
   ensureProviderIconStyles();
-  const activeProvider = getActiveProvider();
+  const activeProvider = getEditingProvider();
   query<HTMLElement>("#providerTriggerIcon").innerHTML = providerIconMarkup(activeProvider);
   providerTriggerLabel.textContent = activeProvider.label;
+  query<HTMLElement>("#disabledProviderHint").hidden = activeProvider.enabled !== false;
   providerMenu.innerHTML = settings.providers.map(renderProviderMenuRow).join("");
   setProviderMenuOpen(keepOpen);
 }
@@ -209,8 +239,9 @@ function renderProviderMenuRow(provider: ProviderConfig): string {
         role="option"
         data-action="select"
         data-provider-id="${escapeAttr(provider.id)}"
-        aria-selected="${provider.id === settings.activeProviderId}"
-        ${enabled ? "" : "disabled"}
+        aria-selected="${provider.id === editingProviderId}"
+        data-enabled="${enabled}"
+        title="${escapeAttr(provider.label)}${enabled ? "" : "（已停用，可编辑）"}"
       >
         ${providerIconMarkup(provider)}
         <span class="provider-option-label">${escapeHtml(provider.label)}</span>
@@ -241,7 +272,7 @@ function renderProviderMenuRow(provider: ProviderConfig): string {
 function renderProviderForm(): void {
   invalidateProviderTest();
   disposeLocalControl?.(); disposeLocalControl = undefined;
-  const provider = getActiveProvider();
+  const provider = getEditingProvider();
   providerPerformance.innerHTML = provider.type === "firefox-local"
     ? '<p class="hint">本地翻译使用固定分块大小 800、并发数 1。</p>'
     : renderProviderPerformance(provider);
@@ -349,7 +380,7 @@ function renderProviderForm(): void {
         ${renderModelControl(provider)}
       </div>
       <label>系统提示词 <textarea data-field="systemPrompt">${escapeHtml(provider.systemPrompt)}</textarea></label>
-      <p class="hint">使用 DeepSeek Chat Completions，默认关闭思考模式以降低翻译延迟。API 地址默认使用 https://api.deepseek.com。</p>
+      <p class="hint">使用 DeepSeek Chat Completions，默认关闭思考模式以降低翻译延迟，可在「高级」中覆盖。API 地址默认使用 https://api.deepseek.com。</p>
     `);
     return;
   }
@@ -395,14 +426,17 @@ function updateLocalControl(): void {
 function setProviderFormMarkup(provider: ProviderConfig, markup: string): void {
   providerForm.dataset.providerId = provider.id;
   providerForm.innerHTML = markup;
+  setupProviderTabs(providerForm, provider);
+  if (!providerForm.querySelector("#test")) {
+    providerForm.insertAdjacentHTML("beforeend", `<div class="provider-test-action">${renderTestButton()}</div>`);
+  }
+  providerForm.insertAdjacentHTML("beforeend", '<p data-role="provider-test-status" class="hint" role="status" hidden></p>');
   const usage = document.createElement("aside"); usage.id = "providerUsage";
   providerForm.append(usage);
   renderProviderUsage(usage, provider);
   updateUsageScheduling();
-  if (!providerForm.querySelector("#test")) {
-    providerForm.insertAdjacentHTML("beforeend", `<div class="provider-test-action">${renderTestButton()}<p data-role="provider-test-status" class="hint" hidden></p></div>`);
-  }
   providerForm.querySelector("#test")?.addEventListener("click", testProvider);
+  providerForm.querySelector("[data-action='test-provider']")?.addEventListener("click", testProvider);
   providerForm.querySelector("[data-action='manage-model']")?.addEventListener("click", () => {
     settings = readSettingsFromForm();
     modelAction.value = "add";
@@ -416,14 +450,14 @@ function setProviderFormMarkup(provider: ProviderConfig, markup: string): void {
 function updateProviderUsage(): void {
   const container = providerForm.querySelector<HTMLElement>("#providerUsage");
   if (!container) return;
-  renderProviderUsage(container, readProviderFromForm(getActiveProvider()));
+  renderProviderUsage(container, readProviderFromForm(getEditingProvider()));
   updateUsageScheduling();
 }
 
 function updateUsageScheduling(): void {
   const container = providerForm.querySelector<HTMLElement>("#providerUsage");
   if (!container) return;
-  const provider = { ...readProviderFromForm(getActiveProvider()), ...readProviderPerformance() } as ProviderConfig;
+  const provider = { ...readProviderFromForm(getEditingProvider()), ...readProviderPerformance() } as ProviderConfig;
   const value = (input: HTMLInputElement, fallback: number, min: number, max: number): number => {
     const number = Number(input.value);
     return input.value && Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;
@@ -454,13 +488,12 @@ function renderModelControl(provider: ModelProvider): string {
       <button type="button" class="icon-button add-model" data-action="manage-model" title="添加或修改模型" aria-label="添加或修改模型">+</button>
       ${renderTestButton()}
     </div>
-    <p data-role="provider-test-status" class="hint" hidden></p>
   </div>`;
 }
 
 async function saveModel(): Promise<void> {
   try {
-    const provider = getActiveProvider();
+    const provider = getEditingProvider();
     if (!("model" in provider)) return;
     const model = customModelName.value.trim();
     if (!model) {
@@ -530,14 +563,15 @@ async function handleProviderAction(action: string, providerId: string): Promise
 
 async function selectProvider(providerId: string): Promise<void> {
   const provider = settings.providers.find((entry) => entry.id === providerId);
-  if (!provider || provider.enabled === false) return;
+  if (!provider) return;
   invalidateProviderTest();
   settings = readSettingsFromForm();
-  settings.activeProviderId = providerId;
+  if (provider.enabled !== false) settings.activeProviderId = providerId;
   await persistSettings(false);
+  editingProviderId = providerId;
   renderProviderPicker(false);
   renderProviderForm();
-  setStatus("已切换当前服务。");
+  setStatus(provider.enabled === false ? "已选中停用服务，可编辑配置。" : "已切换当前服务。");
 }
 
 async function toggleProvider(providerId: string): Promise<void> {
@@ -576,6 +610,7 @@ async function deleteProvider(providerId: string): Promise<void> {
     settings.activeProviderId = settings.providers.find((entry) => entry.enabled !== false)?.id
       ?? DEFAULT_SETTINGS.activeProviderId;
   }
+  if (editingProviderId === providerId) editingProviderId = settings.activeProviderId;
   await persistSettings(false);
   renderProviderPicker(true);
   renderProviderForm();
@@ -607,6 +642,7 @@ async function addCustomProvider(): Promise<void> {
     settings.providers = [...settings.providers, provider];
     settings.activeProviderId = provider.id;
     await persistSettings(false);
+    editingProviderId = provider.id;
     providerDialog.close();
     render();
     setStatus("已添加自定义服务，请完成配置后保存。");
@@ -697,10 +733,10 @@ async function testProvider(): Promise<void> {
   invalidateProviderTest();
   const inlineStatus = providerForm.querySelector<HTMLElement>("[data-role='provider-test-status']");
   if (!inlineStatus) return;
-  const run = { providerId: settings.activeProviderId, status: inlineStatus, message: "" };
+  const run = { providerId: getEditingProvider().id, status: inlineStatus, message: "" };
   activeProviderTest = run;
   const isCurrent = (): boolean => activeProviderTest === run
-    && settings.activeProviderId === run.providerId && run.status.isConnected;
+    && getEditingProvider().id === run.providerId && run.status.isConnected;
   const report = (message: string): void => {
     if (!isCurrent()) return;
     run.message = message;
@@ -726,6 +762,7 @@ async function testProvider(): Promise<void> {
 async function restoreDefaults(): Promise<void> {
   try {
     settings = cloneSettings(DEFAULT_SETTINGS);
+    editingProviderId = undefined;
     await persistSettings(false);
     render();
     setStatus("已恢复默认设置。");
@@ -735,12 +772,39 @@ async function restoreDefaults(): Promise<void> {
 }
 
 function readSettingsFromForm(): ExtensionSettings {
+  let appearance: ReturnType<typeof appearanceControls.read>;
+  try { appearance = appearanceControls.read(); }
+  catch (error) {
+    settingsNavigation.reveal(query<HTMLElement>("#appearanceSettings"));
+    query<HTMLElement>("#appearanceSettings [aria-invalid='true']").focus();
+    throw error;
+  }
   const activeProvider = {
-    ...readProviderFromForm(getActiveProvider()),
-    ...(getActiveProvider().type === "firefox-local" ? { performanceMode: "custom", chunkSize: 800, concurrency: 1 } : readProviderPerformance())
+    ...readProviderFromForm(getEditingProvider()),
+    ...(getEditingProvider().type === "firefox-local" ? { performanceMode: "custom", chunkSize: 800, concurrency: 1 } : readProviderPerformance())
   } as ProviderConfig;
+  if (supportsRequestTemplate(activeProvider)) {
+    try {
+      validateRequestTemplate(activeProvider.requestTemplate);
+    } catch (error) {
+      if (error instanceof RequestTemplateError) {
+        providerForm.querySelector<HTMLButtonElement>("#providerAdvancedTab")!.click();
+        const field = providerForm.querySelector<HTMLTextAreaElement>(
+          `[data-field='${error.field === "headers" ? "requestHeadersTemplate" : "requestBodyTemplate"}']`
+        )!;
+        settingsNavigation.reveal(field);
+        field.setAttribute("aria-invalid", "true");
+        const message = providerForm.querySelector<HTMLElement>("[data-role='request-template-status']")!;
+        message.textContent = error.message;
+        message.hidden = false;
+        field.focus();
+      }
+      throw error;
+    }
+  }
   return {
     ...settings,
+    appearance,
     autoTranslation: autoTranslationControls.read(),
     targetLang: targetLang.value.trim() || "zh-CN",
     sourceLang: sourceLang.value.trim() || "auto",
@@ -751,6 +815,11 @@ function readSettingsFromForm(): ExtensionSettings {
       : pdfTranslationPageRadius.value === "" ? DEFAULT_SETTINGS.pdfTranslationPageRadius : Number(pdfTranslationPageRadius.value),
     cacheEnabled: cacheEnabled.checked,
     floatingBallEnabled: floatingBallEnabled.checked,
+    selectionTranslation: {
+      enabled: selectionTranslationEnabled.checked,
+      provider: selectionDictionary.value as DictionaryProvider,
+      style: selectionTriggerStyle.value as SelectionTriggerStyle
+    },
     imageTranslationEnabled: imageTranslationEnabled.checked,
     translateCodeComments: translateCodeComments.checked,
     translationDisplayMode: translationDisplayMode.value as ExtensionSettings["translationDisplayMode"],
@@ -793,6 +862,9 @@ function readProviderFromForm(provider: ProviderConfig): ProviderConfig {
     if (previousModel && !modelPresets(provider).includes(previousModel)) {
       provider = { ...provider, customModels: [...new Set([...(provider.customModels ?? []), previousModel])] };
     }
+  }
+  if (supportsRequestTemplate(provider)) {
+    provider = { ...provider, requestTemplate: readRequestTemplate(providerForm) };
   }
 
   if (supportsServiceMode(provider)) {
@@ -877,9 +949,11 @@ function parseHeaders(value: string): Record<string, string> {
   return parsed as Record<string, string>;
 }
 
-function getActiveProvider(): ProviderConfig {
-  const provider = settings.providers.find((entry) => entry.id === settings.activeProviderId);
+function getEditingProvider(): ProviderConfig {
+  const provider = settings.providers.find((entry) => entry.id === editingProviderId)
+    ?? settings.providers.find((entry) => entry.id === settings.activeProviderId);
   if (!provider) throw new Error("找不到当前翻译服务。");
+  editingProviderId = provider.id;
   return provider;
 }
 

@@ -63,7 +63,7 @@ try {
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const base = `chrome-extension://${new URL(worker.url()).host}`;
   let options = await context.newPage();
-  await options.goto(`${base}/options.html`);
+  await options.goto(`${base}/options.html#providerSettings`);
   await options.locator('#providerTrigger').click();
   await options.locator('[data-action="select"][data-provider-id="firefox-local"]').click();
   await options.locator('[data-local="download"]:enabled').waitFor();
@@ -85,7 +85,7 @@ try {
   await options.close();
   await context.setOffline(true);
   options = await context.newPage();
-  await options.goto(`${base}/options.html`);
+  await options.goto(`${base}/options.html#providerSettings`);
   await options.locator('[data-local="status"]').filter({ hasText: '模型已就绪' }).waitFor();
   const before = requests.length;
   const fixtureBefore = fixtureRequests;
@@ -123,7 +123,7 @@ try {
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   for (const page of context.pages()) {
-    if (!page.url().endsWith('/options.html')) continue;
+    if (new URL(page.url()).pathname !== '/options.html') continue;
     console.log('Options diagnostics:', await page.locator('body').innerText());
     console.log('Model diagnostics:', await page.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_LOCAL_MODEL_STATUS' })));
     await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true });

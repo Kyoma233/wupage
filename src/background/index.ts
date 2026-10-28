@@ -8,10 +8,12 @@ import { installedRevision } from "../ocr/model-store";
 import { initImageContextMenu } from "./image-context-menu";
 import { initializeOllamaCompatibility } from "./ollama-compatibility";
 import { requestLocal } from "./local";
+import { lookupDictionary, playDictionaryAudio, stopDictionaryAudio } from "./dictionary";
+import { normalizeSelectionTranslation } from "../shared/dictionary";
 
-chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request: RuntimeRequest, sender, sendResponse) => {
   if ("target" in request) return;
-  handleMessage(request)
+  handleMessage(request, sender)
     .then((data): RuntimeResponse => ({ ok: true, data }))
     .catch((error: unknown): RuntimeResponse => ({
       ok: false,
@@ -31,8 +33,17 @@ try {
 }
 void initializeOllamaCompatibility().catch((error: unknown) => console.warn("WuPage Ollama compatibility:", error));
 
-async function handleMessage(request: RuntimeRequest): Promise<unknown> {
+async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   switch (request.type) {
+    case "LOOKUP_DICTIONARY":
+    case "PLAY_DICTIONARY_AUDIO": {
+      const settings = normalizeSelectionTranslation((await getSettings()).selectionTranslation);
+      if (!settings.enabled) throw new Error("请先在设置中开启划词翻译。");
+      if (request.type === "LOOKUP_DICTIONARY") return lookupDictionary(request.provider, request.query);
+      return playDictionaryAudio(request.provider, request.url, `${sender.tab?.id ?? "extension"}:${sender.frameId ?? 0}`);
+    }
+    case "STOP_DICTIONARY_AUDIO":
+      return stopDictionaryAudio(`${sender.tab?.id ?? "extension"}:${sender.frameId ?? 0}`);
     case "GET_LOCAL_MODEL_STATUS":
       return requestLocal("status");
     case "INSTALL_LOCAL_MODEL":
@@ -87,7 +98,7 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
         (provider) => provider.id === (request.providerId ?? settings.activeProviderId)
       );
       if (!providerConfig) throw new Error("Provider not found.");
-      if (providerConfig.enabled === false) throw new Error("Provider is disabled.");
+      // An explicit settings test can validate a service before it is enabled.
       const provider = createProvider(providerConfig);
       const validation = provider.validateConfig();
       if (!validation.ok) throw new Error(validation.message);

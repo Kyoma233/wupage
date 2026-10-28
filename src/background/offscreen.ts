@@ -30,8 +30,9 @@ export async function ensureOffscreenDocument(): Promise<void> {
     if (await chrome.offscreen.hasDocument()) return;
     await chrome.offscreen.createDocument({
       url: "ocr-offscreen.html",
-      reasons: [chrome.offscreen.Reason.IFRAME_SCRIPTING, chrome.offscreen.Reason.WORKERS],
-      justification: "Manage optional local OCR and Bergamot models and run local inference."
+      reasons: [chrome.offscreen.Reason.IFRAME_SCRIPTING, chrome.offscreen.Reason.WORKERS,
+        chrome.offscreen.Reason.DOM_PARSER, chrome.offscreen.Reason.AUDIO_PLAYBACK],
+      justification: "Run local inference, parse dictionary entries and play dictionary pronunciations."
     });
   })();
   try { await opening; } finally { opening = undefined; }

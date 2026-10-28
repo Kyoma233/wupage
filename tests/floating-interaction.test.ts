@@ -76,6 +76,24 @@ describe("floating translation interactions", () => {
     return vi.mocked(sendRuntimeRequest).mock.calls.map(([request]) => request).filter((request) => request.type === "TRANSLATE_BATCH");
   }
 
+  it("initializes the menu before a first translation failure reveals it without hovering", async () => {
+    const menu = query<HTMLElement>("#wupage-floating-menu");
+    expect(menu.hidden).toBe(true);
+    const provider = query<HTMLSelectElement>("[data-role='provider']");
+    expect(provider.value).toBe(stored.activeProviderId);
+    expect(provider.options).toHaveLength(stored.providers.filter((entry) => entry.enabled !== false).length);
+    const runtime = vi.mocked(sendRuntimeRequest).getMockImplementation()!;
+    vi.mocked(sendRuntimeRequest).mockImplementation(async (request) => {
+      if (request.type === "TRANSLATE_BATCH") throw new Error("服务暂不可用");
+      return runtime(request);
+    });
+    query<HTMLButtonElement>("#wupage-floating-ball").click();
+    await vi.waitFor(() => expect(menu.hidden).toBe(false));
+    expect(query(".wupage-provider-trigger .wupage-provider-name").textContent)
+      .toBe(stored.providers.find((entry) => entry.id === stored.activeProviderId)!.label);
+    expect(query(`[data-mode='${stored.translationDisplayMode}']`).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("opens after 500 ms of hover and allows crossing the gap before closing on leave", () => {
     vi.useFakeTimers();
     const menu = hover();
@@ -128,6 +146,77 @@ describe("floating translation interactions", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     vi.advanceTimersByTime(600);
     expect(menu.hidden).toBe(true);
+  });
+
+  it("opens on a 500 ms touch hold and stays open after release without translating", async () => {
+    vi.useFakeTimers();
+    const ball = query<HTMLButtonElement>("#wupage-floating-ball");
+    const menu = query<HTMLElement>("#wupage-floating-menu");
+    ball.setPointerCapture = vi.fn();
+    ball.dispatchEvent(pointer("pointerdown", 800, 600, "touch"));
+    vi.advanceTimersByTime(499);
+    expect(menu.hidden).toBe(true);
+    ball.dispatchEvent(pointer("pointermove", 803, 602, "touch")); // Ignore normal finger jitter.
+    vi.advanceTimersByTime(1);
+    expect(menu.hidden).toBe(false);
+    const contextMenu = new Event("contextmenu", { cancelable: true });
+    ball.dispatchEvent(contextMenu);
+    expect(contextMenu.defaultPrevented).toBe(true);
+    ball.dispatchEvent(pointer("pointerup", 803, 602, "touch"));
+    ball.click();
+    query("#wupage-floating-hitbox").dispatchEvent(pointer("pointerleave", 803, 602, "touch"));
+    menu.dispatchEvent(pointer("pointerleave", 803, 602, "touch"));
+    vi.advanceTimersByTime(1000);
+    expect(menu.hidden).toBe(false);
+    expect(translationRequests()).toHaveLength(0);
+    document.querySelector("main")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(menu.hidden).toBe(true);
+    // Consuming the long-press click must not consume a subsequent ordinary tap.
+    ball.dispatchEvent(pointer("pointerdown", 800, 600, "touch"));
+    ball.dispatchEvent(pointer("pointerup", 800, 600, "touch"));
+    ball.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(translationRequests()).toHaveLength(1);
+  });
+
+  it("keeps a short touch as a translation tap and cancels the pending long press", async () => {
+    vi.useFakeTimers();
+    const ball = query<HTMLButtonElement>("#wupage-floating-ball");
+    ball.setPointerCapture = vi.fn();
+    ball.dispatchEvent(pointer("pointerdown", 800, 600, "touch"));
+    vi.advanceTimersByTime(150);
+    ball.dispatchEvent(pointer("pointerup", 800, 600, "touch"));
+    ball.click();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(translationRequests()).toHaveLength(1);
+    expect(query<HTMLElement>("#wupage-floating-menu").hidden).toBe(true);
+  });
+
+  it("cancels the long press when the finger drags the ball", () => {
+    vi.useFakeTimers();
+    const ball = query<HTMLButtonElement>("#wupage-floating-ball");
+    ball.setPointerCapture = vi.fn();
+    ball.dispatchEvent(pointer("pointerdown", 800, 600, "touch"));
+    vi.advanceTimersByTime(200);
+    ball.dispatchEvent(pointer("pointermove", 830, 620, "touch"));
+    vi.advanceTimersByTime(600);
+    ball.dispatchEvent(pointer("pointerup", 830, 620, "touch"));
+    ball.click();
+    expect(query<HTMLElement>("#wupage-floating-menu").hidden).toBe(true);
+    expect(translationRequests()).toHaveLength(0);
+  });
+
+  it.each(["pointercancel", "lostpointercapture"])("cancels a long press after %s", (eventType) => {
+    vi.useFakeTimers();
+    const ball = query<HTMLButtonElement>("#wupage-floating-ball");
+    ball.setPointerCapture = vi.fn();
+    ball.dispatchEvent(pointer("pointerdown", 800, 600, "touch"));
+    vi.advanceTimersByTime(200);
+    ball.dispatchEvent(pointer(eventType, 800, 600, "touch"));
+    vi.advanceTimersByTime(600);
+    ball.click();
+    expect(query<HTMLElement>("#wupage-floating-menu").hidden).toBe(true);
+    expect(translationRequests()).toHaveLength(0);
   });
 
   it("switches immediately between translation and original and can translate again", async () => {
@@ -196,7 +285,7 @@ describe("floating translation interactions", () => {
     expect(getComputedStyle(ball).cursor).toBe("pointer");
     expect(getComputedStyle(ball).opacity).not.toBe("0.68");
     expect(query<HTMLButtonElement>("[data-action='page-toggle']").disabled).toBe(false);
-    expect(query("[data-action='page-toggle']").textContent).toBe("停止翻译并显示原文");
+    expect(query("[data-action='page-toggle']").textContent).toBe("显示原文");
     ball.click();
     expect(ball.textContent).toBe("译");
     expect(ball.getAttribute("aria-busy")).toBe("false");
@@ -227,6 +316,45 @@ describe("floating translation interactions", () => {
     completions[1]({ translations: ["新译文"], cached: 0 });
     await vi.waitFor(() => expect(ball.getAttribute("aria-busy")).toBe("false"));
     expect(query(".wupage-translation").textContent).toBe("新译文");
+  });
+
+  it("keeps the open menu action and position stable while a dynamic feed translates more posts", async () => {
+    const ball = query<HTMLButtonElement>("#wupage-floating-ball");
+    ball.click();
+    await vi.waitFor(() => expect(ball.getAttribute("aria-busy")).toBe("false"));
+    storageChanged({ "wupage.floating.position": { newValue: { left: 800, top: 300, edge: null } } }, "local");
+    const menu = query<HTMLElement>("#wupage-floating-menu");
+    let menuHeight = 200;
+    Object.defineProperty(menu, "offsetHeight", { configurable: true, get: () => menuHeight });
+    ball.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const pageToggle = query<HTMLButtonElement>("[data-action='page-toggle']");
+    const actionText = pageToggle.firstChild;
+    const initialTop = menu.style.top;
+    const completions: Array<(value: unknown) => void> = [];
+    const runtime = vi.mocked(sendRuntimeRequest).getMockImplementation()!;
+    vi.mocked(sendRuntimeRequest).mockImplementation((request) => request.type === "TRANSLATE_BATCH"
+      ? new Promise((resolve) => completions.push(resolve)) : runtime(request));
+    for (let index = 0; index < 3; index++) {
+      menuHeight = 240;
+      const post = document.createElement("p");
+      post.textContent = `A newly loaded post number ${index} for translation.`;
+      query("main").append(post);
+      await vi.waitFor(() => expect(completions).toHaveLength(index + 1));
+      expect(ball.getAttribute("aria-busy")).toBe("true");
+      expect(pageToggle.textContent).toBe("显示原文");
+      expect(pageToggle.firstChild).toBe(actionText);
+      expect(menu.style.top).toBe(initialTop);
+      menuHeight = 200;
+      completions[index]({ translations: [`新增译文 ${index}`], cached: 0 });
+      await vi.waitFor(() => expect(ball.getAttribute("aria-busy")).toBe("false"));
+      expect(pageToggle.firstChild).toBe(actionText);
+      expect(menu.style.top).toBe(initialTop);
+      expect(menu.hidden).toBe(false);
+    }
+    expect(translationRequests()).toHaveLength(4);
+    pageToggle.click();
+    expect(ball.textContent).toBe("译");
+    expect(pageToggle.textContent).toBe("翻译全文");
   });
 
   it("does not restart a cancelled action when its settings arrive late", async () => {
@@ -397,8 +525,9 @@ function query<T extends Element = HTMLElement>(selector: string): T {
   return element;
 }
 
-function pointer(type: string, clientX: number, clientY: number): Event {
+function pointer(type: string, clientX: number, clientY: number, pointerType = "mouse"): Event {
   const event = new Event(type, { bubbles: true });
-  Object.defineProperties(event, { clientX: { value: clientX }, clientY: { value: clientY }, pointerId: { value: 1 }, button: { value: 0 } });
+  Object.defineProperties(event, { clientX: { value: clientX }, clientY: { value: clientY }, pointerId: { value: 1 },
+    pointerType: { value: pointerType }, button: { value: 0 } });
   return event;
 }

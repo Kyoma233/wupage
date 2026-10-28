@@ -1,0 +1,21 @@
+:root {
+  --wp-background: #f7f8f5;
+  --wp-surface: #ffffff;
+  --wp-foreground: #172026;
+  --wp-muted: #647379;
+  --wp-accent: #116466;
+  --wp-border: #d7dedb;
+  --wp-success: #25734c;
+  --wp-danger: #b42318;
+  --wp-on-accent: #ffffff;
+}
+
+/* Derived colors must resolve on each themed surface, including the isolated preview. */
+:root, .appearance-preview {
+  --wp-soft: color-mix(in srgb, var(--wp-accent) 6%, var(--wp-surface));
+  --wp-selected: color-mix(in srgb, var(--wp-accent) 12%, var(--wp-surface));
+  --wp-accent-hover: color-mix(in srgb, var(--wp-accent) 85%, var(--wp-foreground));
+  --wp-danger-soft: color-mix(in srgb, var(--wp-danger) 8%, var(--wp-surface));
+}
+
+::selection { background: var(--wp-selected); color: var(--wp-foreground); }

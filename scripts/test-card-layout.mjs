@@ -12,7 +12,12 @@ const moduleName = process.env.PLAYWRIGHT_MODULE || "playwright";
 const { chromium } = await import(path.isAbsolute(moduleName) ? pathToFileURL(moduleName).href : moduleName);
 const title = "A modular library for game extensions";
 const summary = "Lightweight tools for creating and sharing extensions with other players.";
-const translations = [[title, "游戏扩展模块库"], [summary, "用于创建扩展并与其他玩家分享的轻量级工具。"], ["by", "作者"]];
+const listTranslations = [
+  ["Lower your expectations for this puzzle", "降低你对这个谜题的期望"],
+  ["Is there a special place for Hilbert's foundations of geometry?", "希尔伯特的《几何基础》在几何学基础中是否享有特殊地位？"],
+  ["performance", "性能"], ["stream", "流"], ["memory-efficient", "节省内存"]
+];
+const translations = [[title, "游戏扩展模块库"], [summary, "用于创建扩展并与其他玩家分享的轻量级工具。"], ["by", "作者"], ...listTranslations];
 const server = createServer((request, response) => {
   const chinese = request.url === "/zh";
   response.setHeader("content-type", "text/html; charset=utf-8");
@@ -25,11 +30,28 @@ const server = createServer((request, response) => {
       -webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden}
     .author{flex-shrink:0;white-space:nowrap;font-weight:400;color:#b1b8bd}.author a{color:inherit}
     .summary{margin-top:8px;font-size:16px;font-weight:400;line-height:24px}
+    #list-layout{max-width:300px;padding:12px;background:white;color:#0c0d0e}
+    #list-layout a{color:#0074cc;text-decoration:none}
+    .post-tags{padding:0;list-style:none}.post-tags li{display:inline;margin-right:4px}
+    .post-tags a{display:inline-flex;align-items:center;padding:4px 6px;border-radius:4px;background:#edf0f2;font-size:13px}
+    /* Stack Overflow's icon/link rows reserve 90% of the line for the link. */
+    #hot-network-questions ul{margin:0;padding:0}
+    #hot-network-questions li{list-style-type:none;white-space:nowrap;margin:0 0 10px}
+    #hot-network-questions .favicon,#hot-network-questions a{display:inline-block;vertical-align:top}
+    #hot-network-questions .favicon{width:16px;height:16px;margin:2px 6px 0 0;background:#0074cc}
+    #hot-network-questions a{font-weight:normal;font-size:13px;white-space:normal;width:90%}
     </style></head><body><main>
     <p>${chinese ? "游戏版本 · 加载器 · 排序方式 · 客户端或服务端" : "Browse community extensions and tools for your game."}</p>
     ${["flex", "grid"].map(layout => `<div class="card" id="${layout}"><div class="fields ${layout}">
       <span class="title">${title}</span><span class="author">by <a href="/user/developer">developer</a></span>
       </div><div class="summary">${summary}</div></div>`).join("")}
+    <div id="list-layout"><ul class="post-tags">${listTranslations.slice(2).map(([text]) =>
+      `<li><a class="layout-link" href="/tag/${text}" rel="tag">${text}</a></li>`).join("")}</ul>
+      <div id="hot-network-questions"><h4>Hot Network Questions</h4><ul>
+        <li><div class="favicon" title="Puzzling"></div><a class="layout-link" href="/question/1">Lower your <em>expectations</em> for this puzzle</a></li>
+        <li><div class="favicon" title="Mathematics"></div><a class="layout-link" href="/question/2">${listTranslations[1][0]}</a></li>
+      </ul></div>
+    </div>
     </main></body></html>`);
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -77,6 +99,9 @@ try {
     await page.goto(url);
     await page.waitForSelector("#wupage-floating-ball", { state: "attached" });
     const original = await page.locator("main").innerHTML();
+    const listLinks = await page.locator(".layout-link").evaluateAll(nodes => nodes.map(node => ({
+      href: node.getAttribute("href"), color: getComputedStyle(node).color
+    })));
     const typography = await page.locator(".title").evaluateAll(nodes => nodes.map(node => {
       const { fontSize, fontWeight, lineHeight, color } = getComputedStyle(node);
       return { fontSize, fontWeight, lineHeight, color };
@@ -103,10 +128,25 @@ try {
         await page.waitForFunction(mode => [...document.querySelectorAll(".wupage-translation")]
           .every(node => node.dataset.wupageDisplayMode === mode), mode);
         assert.equal(await page.locator(".fields > .wupage-translation").count(), 0);
+        assert.equal(await page.locator("#list-layout li > .wupage-translation").count(), 0);
+        assert.equal(await page.locator(".layout-link .wupage-translation").count(), 5);
+        assert.deepEqual(await page.locator(".layout-link").evaluateAll(nodes => nodes.map(node => ({
+          href: node.getAttribute("href"), color: getComputedStyle(node).color
+        }))), listLinks);
+        const listLayout = await page.locator(".layout-link").evaluateAll(nodes => nodes.map(node => {
+          const translation = node.querySelector(".wupage-translation");
+          const box = node.getBoundingClientRect();
+          const insideLink = [...translation.getClientRects()].every(rect => rect.left >= box.left - 1
+            && rect.right <= box.right + 1 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1);
+          const row = node.closest("li").getBoundingClientRect();
+          return { insideLink, insideRow: box.right <= row.right + 1, color: getComputedStyle(translation).color };
+        }));
+        assert.ok(listLayout.every(row => row.insideLink && row.insideRow), JSON.stringify({ locale, width, mode, listLayout }));
         assert.deepEqual(await page.locator(".author a").evaluateAll(nodes => nodes.map(node => node.getAttribute("href"))),
           ["/user/developer", "/user/developer"]);
         assert.equal(await page.locator("main").evaluate(node => node.scrollWidth > node.clientWidth + 1), false);
         if (mode === "replace") {
+          assert.deepEqual(listLayout.map(row => row.color), listLinks.map(link => link.color));
           const rendered = await page.locator(".title .wupage-translation").evaluateAll(nodes => nodes.map(node => {
             const { fontSize, fontWeight, lineHeight, color } = getComputedStyle(node);
             return { fontSize, fontWeight, lineHeight, color };
@@ -115,7 +155,7 @@ try {
           assert.deepEqual(await page.locator(".title").allTextContents(), [translations[0][1], translations[0][1]]);
         }
         assert.equal(await worker.evaluate(() => globalThis.cardRequests.length), requestCount);
-        reports.push({ locale, width, mode, independentFields: true, linksPreserved: true });
+        reports.push({ locale, width, mode, independentFields: true, linksPreserved: true, listLayout });
         await page.screenshot({ path: path.join(output, `${locale}-${width}-${mode}.png`) });
       }
     }
@@ -127,7 +167,7 @@ try {
   assert.ok(requests.includes(summary), "Retry the untranslated description independently");
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, "report.json"), JSON.stringify({ reports, errors }, null, 2));
-  console.log("PASS: localized card pages; 12 locale/viewport/mode combinations, title typography, author links, mixed-language recovery and source restoration");
+  console.log("PASS: localized card pages; 12 locale/viewport/mode combinations, title typography, icon/link rows, tag labels, mixed-language recovery and source restoration");
 } finally {
   await context?.close();
   await new Promise(resolve => server.close(resolve));

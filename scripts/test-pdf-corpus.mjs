@@ -145,8 +145,6 @@ try {
     if (!args.includes("--auto-open")) {
       await page.waitForSelector("#provider option", { state: "attached" });
       await page.locator("#fileInput").setInputFiles(entry.file);
-      await page.waitForFunction(() => !document.querySelector("#translateDocument").disabled, undefined, { timeout: 90_000 });
-      await page.locator("#translateDocument").click();
     }
     await page.waitForFunction(() => !document.querySelector("#translateDocument").disabled
       && document.querySelector("#statusToast").textContent.includes("翻译完成"), undefined, { timeout: 180_000 });

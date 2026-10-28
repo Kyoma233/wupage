@@ -1,6 +1,10 @@
 import type { ExtensionSettings } from "./types";
+import { DEFAULT_SELECTION_TRANSLATION } from "./dictionary";
+import { DEFAULT_APPEARANCE } from "./appearance";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
+  appearance: { ...DEFAULT_APPEARANCE, customSchemes: [] },
+  selectionTranslation: { ...DEFAULT_SELECTION_TRANSLATION },
   autoTranslation: { enabled: false, nonTargetLanguage: false, presetSites: [], customSites: [] },
   targetLang: "zh-CN",
   sourceLang: "auto",

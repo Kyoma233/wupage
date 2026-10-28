@@ -1,0 +1,121 @@
+// @vitest-environment jsdom
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../src/shared/defaults";
+import { normalizeSettings } from "../src/shared/settings";
+import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../src/shared/types";
+
+describe("settings category navigation", () => {
+  let stored: ExtensionSettings;
+  let sendMessage: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    history.replaceState(null, "", "/options.html");
+    document.open();
+    document.write(readFileSync(resolve(process.cwd(), "options.html"), "utf8"));
+    document.close();
+    stored = structuredClone(DEFAULT_SETTINGS);
+    sendMessage = vi.fn(async (request: RuntimeRequest): Promise<RuntimeResponse> => {
+      if (request.type === "GET_SETTINGS") return { ok: true, data: stored };
+      if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "not-installed" } };
+      if (request.type === "SAVE_SETTINGS") stored = normalizeSettings(request.settings);
+      return { ok: true, data: null };
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+  });
+
+  afterEach(() => {
+    window.dispatchEvent(new Event("pagehide"));
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    history.replaceState(null, "", "/");
+    document.documentElement.replaceChildren();
+  });
+
+  async function mount(): Promise<void> {
+    await import("../src/options/index");
+    await vi.waitFor(() => expect(query("#providerTriggerLabel").textContent).toBe("Microsoft 翻译"));
+  }
+
+  function navigate(id: string): void {
+    query<HTMLAnchorElement>(`.settings-nav a[aria-controls="${id}"]`).click();
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".settings-panel"))
+      .filter(panel => !panel.hidden).map(panel => panel.id)).toEqual([id]);
+    expect(document.querySelector(".settings-nav [aria-current='page']")?.getAttribute("aria-controls")).toBe(id);
+  }
+
+  it("retains drafts across categories and saves all categories together", async () => {
+    await mount();
+    expect(query<HTMLElement>("#generalSettings").hidden).toBe(false);
+    query<HTMLSelectElement>("#sourceLang").value = "en";
+    navigate("autoTranslationSettings");
+    query<HTMLInputElement>("#autoTranslateEnabled").click();
+    query<HTMLInputElement>("#autoTranslateSites input[data-preset='github.com']").click();
+    navigate("providerSettings");
+    navigate("performanceSettings");
+    query<HTMLInputElement>("#concurrency").value = "2";
+    navigate("generalSettings");
+    expect(query<HTMLSelectElement>("#sourceLang").value).toBe("en");
+    navigate("providerSettings");
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === "SAVE_SETTINGS")).toHaveLength(0);
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored).toMatchObject({
+      sourceLang: "en", concurrency: 2,
+      autoTranslation: { enabled: true, presetSites: ["github.com"] }
+    }));
+    expect(query<HTMLElement>("#providerSettings").hidden).toBe(false);
+    expect(location.hash).toBe("#providerSettings");
+  });
+
+  it("opens nested PDF links and responds to history navigation", async () => {
+    history.replaceState(null, "", "/options.html#pdfSettings");
+    await mount();
+    expect(query<HTMLElement>("#performanceSettings").hidden).toBe(false);
+    navigate("autoTranslationSettings");
+    history.back();
+    await vi.waitFor(() => {
+      expect(location.hash).toBe("#pdfSettings");
+      expect(query<HTMLElement>("#performanceSettings").hidden).toBe(false);
+    });
+    history.forward();
+    await vi.waitFor(() => expect(query<HTMLElement>("#autoTranslationSettings").hidden).toBe(false));
+  });
+
+  it("reveals and focuses an invalid site rule when saving another category", async () => {
+    await mount();
+    navigate("autoTranslationSettings");
+    query<HTMLButtonElement>("#addAutoTranslateSite").click();
+    const draft = query<HTMLInputElement>(".auto-site-row:nth-last-child(2) .auto-site-pattern");
+    draft.value = "https://";
+    navigate("performanceSettings");
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(query("#status").textContent).toContain("请修改"));
+    expect(query<HTMLElement>("#autoTranslationSettings").hidden).toBe(false);
+    expect(document.activeElement).toBe(draft);
+    expect(draft.getAttribute("aria-invalid")).toBe("true");
+    expect(sendMessage.mock.calls.some(([request]) => request.type === "SAVE_SETTINGS")).toBe(false);
+  });
+
+  it("keeps image translation setup notices in the general category", async () => {
+    history.replaceState(null, "", "/options.html?imageTranslationNotice=setup#providerSettings");
+    await mount();
+    expect(query<HTMLElement>("#generalSettings").hidden).toBe(false);
+    expect(query("#status").textContent).toContain("安装 OCR 模型");
+  });
+
+  it("falls back to general settings for an unknown category", async () => {
+    history.replaceState(null, "", "/options.html#missing-category");
+    await mount();
+    expect(query<HTMLElement>("#generalSettings").hidden).toBe(false);
+    expect(document.querySelector(".settings-nav [aria-current='page']")?.getAttribute("aria-controls")).toBe("generalSettings");
+  });
+});
+
+function query<T extends Element = HTMLElement>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`Missing element: ${selector}`);
+  return element;
+}

@@ -46,6 +46,7 @@ const DEFAULT_BOTTOM = 146;
 const MENU_OPEN_DELAY = 500;
 const MENU_CLOSE_DELAY = 240;
 const DRAG_THRESHOLD = 4;
+const TOUCH_DRAG_THRESHOLD = 8;
 const TARGET_LANGUAGES = [
   { code: "zh-CN", label: "中文" },
   { code: "en", label: "English" },
@@ -71,6 +72,10 @@ let dragStartX = 0;
 let dragStartY = 0;
 let menuOpenTimer: number | undefined;
 let menuCloseTimer: number | undefined;
+let longPressTimer: number | undefined;
+let activePointerId: number | undefined;
+let longPressTriggered = false;
+let touchInteraction = false;
 let pageActionPending = false;
 let pageActionVersion = 0;
 let menuError: string | null = null;
@@ -93,6 +98,9 @@ export function initFloatingBall(): void {
   if (document.getElementById(FLOATING_ID)) return;
   cancelMenuOpen();
   cancelMenuClose();
+  cancelLongPress();
+  activePointerId = undefined;
+  dragging = movedDuringDrag = longPressTriggered = touchInteraction = false;
   menuError = null;
   settingsSave = Promise.resolve();
 
@@ -101,7 +109,7 @@ export function initFloatingBall(): void {
   const button = document.createElement("button");
   button.id = FLOATING_ID;
   button.type = "button";
-  button.title = "单击翻译全文 · 悬停打开菜单 · 拖动调整位置";
+  button.title = floatingBallTitle("翻译全文");
   button.setAttribute("aria-label", "翻译全文");
   button.setAttribute("aria-controls", "wupage-floating-menu");
   button.setAttribute("aria-expanded", "false");
@@ -112,6 +120,7 @@ export function initFloatingBall(): void {
   button.append(label);
   button.addEventListener("click", (event) => {
     cancelMenuOpen();
+    cancelLongPress();
     if (movedDuringDrag) {
       event.preventDefault();
       movedDuringDrag = false;
@@ -120,6 +129,10 @@ export function initFloatingBall(): void {
     void togglePageTranslationFromFloating();
   });
   button.addEventListener("pointerdown", startDrag);
+  button.addEventListener("contextmenu", (event) => {
+    if ("pointerType" in event && event.pointerType === "mouse") return;
+    if (touchInteraction) event.preventDefault();
+  });
   button.addEventListener("focus", () => {
     if (button.matches(":focus-visible")) openMenu();
   });
@@ -130,7 +143,9 @@ export function initFloatingBall(): void {
     document.querySelector<HTMLSelectElement>("#wupage-floating-menu select")?.focus();
   });
   hitbox.addEventListener("pointerenter", (event) => {
-    if (event.pointerType !== "touch") scheduleMenuOpen();
+    touchInteraction = event.pointerType === "touch";
+    if (touchInteraction) cancelMenuClose();
+    else scheduleMenuOpen();
   });
   hitbox.addEventListener("pointerleave", scheduleMenuClose);
   hitbox.addEventListener("focusout", scheduleMenuClose);
@@ -153,11 +168,17 @@ export function initFloatingBall(): void {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     cancelMenuOpen();
+    cancelLongPress();
     const menu = document.getElementById("wupage-floating-menu");
     if (!menu || menu.hidden) return;
     if (menu.contains(document.activeElement)) button.focus({ preventScroll: true });
     setMenuOpen(menu, false);
   });
+  window.addEventListener("pagehide", () => {
+    cancelLongPress();
+    cancelMenuOpen();
+    cancelMenuClose();
+  }, { once: true });
 }
 
 async function initializeFloatingBall(button: HTMLElement): Promise<void> {
@@ -259,8 +280,12 @@ function handleDocumentClick(event: MouseEvent): void {
 }
 
 function startDrag(event: PointerEvent): void {
-  if (event.button !== 0 && event.button !== undefined) return;
+  if ((event.button !== 0 && event.button !== undefined) || event.isPrimary === false
+    || activePointerId !== undefined) return;
   const button = event.currentTarget as HTMLElement;
+  activePointerId = event.pointerId;
+  touchInteraction = event.pointerType === "touch";
+  longPressTriggered = false;
   dragging = true;
   movedDuringDrag = false;
   const rect = button.getBoundingClientRect();
@@ -274,12 +299,24 @@ function startDrag(event: PointerEvent): void {
   button.addEventListener("pointermove", drag);
   button.addEventListener("pointerup", stopDrag);
   button.addEventListener("pointercancel", stopDrag);
+  button.addEventListener("lostpointercapture", stopDrag);
+  if (touchInteraction) {
+    longPressTimer = window.setTimeout(() => {
+      longPressTimer = undefined;
+      if (!dragging || movedDuringDrag) return;
+      longPressTriggered = true;
+      dragging = false;
+      openMenu();
+    }, MENU_OPEN_DELAY);
+  }
 }
 
 function drag(event: PointerEvent): void {
-  if (!dragging) return;
+  if (!dragging || event.pointerId !== activePointerId) return;
   const button = event.currentTarget as HTMLElement;
-  if (!movedDuringDrag && Math.hypot(event.clientX - dragStartX, event.clientY - dragStartY) < DRAG_THRESHOLD) return;
+  const threshold = touchInteraction ? TOUCH_DRAG_THRESHOLD : DRAG_THRESHOLD;
+  if (!movedDuringDrag && Math.hypot(event.clientX - dragStartX, event.clientY - dragStartY) < threshold) return;
+  cancelLongPress();
   movedDuringDrag = true;
   button.classList.add("is-dragging");
   delete button.dataset.edge;
@@ -290,15 +327,26 @@ function drag(event: PointerEvent): void {
 }
 
 function stopDrag(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId) return;
+  activePointerId = undefined;
+  cancelLongPress();
   const button = event.currentTarget as HTMLElement;
   dragging = false;
   button.classList.remove("is-dragging");
-  if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
   button.removeEventListener("pointermove", drag);
   button.removeEventListener("pointerup", stopDrag);
   button.removeEventListener("pointercancel", stopDrag);
+  button.removeEventListener("lostpointercapture", stopDrag);
+  if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
   if (movedDuringDrag) settlePosition(button);
-  if (event.type === "pointercancel") movedDuringDrag = true;
+  // Consume the click synthesized on release after dragging, cancellation or a long press.
+  if (longPressTriggered || event.type !== "pointerup") movedDuringDrag = true;
+  longPressTriggered = false;
+}
+
+function cancelLongPress(): void {
+  window.clearTimeout(longPressTimer);
+  longPressTimer = undefined;
 }
 
 function createMenu(): void {
@@ -379,7 +427,13 @@ function createMenu(): void {
       <button type="button" data-action="close" title="可在扩展弹窗中重新开启">隐藏悬浮球</button>
     </div>
   `;
-  menu.addEventListener("pointerenter", cancelMenuClose);
+  menu.addEventListener("pointerenter", (event) => {
+    touchInteraction = event.pointerType === "touch";
+    cancelMenuClose();
+  });
+  menu.addEventListener("pointerdown", (event) => {
+    touchInteraction = event.pointerType === "touch";
+  });
   menu.addEventListener("pointerleave", scheduleMenuClose);
   menu.addEventListener("wupage-provider-close", scheduleMenuClose);
   menu.addEventListener("focusin", cancelMenuClose);
@@ -494,6 +548,7 @@ function cancelMenuClose(): void {
 function scheduleMenuClose(): void {
   cancelMenuOpen();
   cancelMenuClose();
+  if (touchInteraction) return;
   menuCloseTimer = window.setTimeout(() => {
     menuCloseTimer = undefined;
     const menu = document.getElementById("wupage-floating-menu");
@@ -505,7 +560,7 @@ function scheduleMenuClose(): void {
   }, MENU_CLOSE_DELAY);
 }
 
-function positionMenu(menu: HTMLElement, button: HTMLElement): void {
+function positionMenu(menu: HTMLElement, button: HTMLElement, preserveTop = false): void {
   const size = getFloatingSize(button);
   const hitbox = document.getElementById(FLOATING_HITBOX_ID);
   // Use the settled position so the edge reveal animation cannot move the menu.
@@ -530,7 +585,8 @@ function positionMenu(menu: HTMLElement, button: HTMLElement): void {
     ? availableLeft >= availableRight ? leftAnchor - menuWidth - EDGE_MARGIN : leftAnchor + size + EDGE_MARGIN
     : leftAnchor + size / 2 - menuWidth / 2;
   const left = clamp(preferredLeft, EDGE_MARGIN, Math.max(EDGE_MARGIN, window.innerWidth - menuWidth - EDGE_MARGIN));
-  const preferredTop = beside
+  const previousTop = preserveTop ? Number.parseFloat(menu.style.top) : NaN;
+  const preferredTop = Number.isFinite(previousTop) ? previousTop : beside
     ? ballTop + size / 2 - menuHeight / 2
     : availableAbove >= availableBelow ? ballTop - menuHeight - EDGE_MARGIN : ballTop + size + EDGE_MARGIN;
   const top = clamp(preferredTop, EDGE_MARGIN, Math.max(EDGE_MARGIN, window.innerHeight - menuHeight - EDGE_MARGIN));
@@ -603,7 +659,7 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
     button.setAttribute("aria-pressed", String(button.dataset.mode === settings.translationDisplayMode));
   });
   const button = document.getElementById(FLOATING_ID);
-  if (button && !menu.hidden) positionMenu(menu, button);
+  if (button && !menu.hidden) positionMenu(menu, button, true);
 }
 
 function syncSelectValue(select: HTMLSelectElement): void {
@@ -717,6 +773,7 @@ function setButtonPosition(button: HTMLElement, left: number, top: number): void
 function setMenuOpen(menu: HTMLElement, open: boolean): void {
   cancelMenuOpen();
   cancelMenuClose();
+  if (!open) cancelLongPress();
   menu.hidden = !open;
   const button = document.getElementById(FLOATING_ID);
   button?.classList.toggle("is-menu-open", open);
@@ -790,33 +847,36 @@ function refreshTranslationState(): void {
   const busy = pageActionPending || state.pending > 0;
   const translated = hasPageTranslations();
   const translationEnabled = state.active || translated;
-  const actionLabel = busy ? "停止翻译并显示原文" : translationEnabled ? "显示原文" : "翻译全文";
+  // Incremental batches change progress, but the action remains restoring the original.
+  const actionLabel = busy || translationEnabled ? "显示原文" : "翻译全文";
   const ball = document.getElementById(FLOATING_ID);
   ball?.classList.toggle("is-loading", busy || translating);
   ball?.setAttribute("aria-busy", String(busy));
   ball?.setAttribute("aria-disabled", "false");
   ball?.setAttribute("aria-label", actionLabel);
-  if (ball) ball.title = `单击${actionLabel} · 悬停打开菜单 · 拖动调整位置`;
+  if (ball) ball.title = floatingBallTitle(actionLabel);
   const label = ball?.querySelector(".wupage-floating-label");
-  if (label) label.textContent = busy || translationEnabled ? "原" : "译";
+  const ballLabel = busy || translationEnabled ? "原" : "译";
+  if (label && label.textContent !== ballLabel) label.textContent = ballLabel;
 
   const menu = document.getElementById("wupage-floating-menu");
   if (!menu) return;
   const pageToggle = menu.querySelector<HTMLButtonElement>("[data-action='page-toggle']");
   if (pageToggle) {
-    pageToggle.textContent = actionLabel;
+    if (pageToggle.textContent !== actionLabel) pageToggle.textContent = actionLabel;
     pageToggle.disabled = false;
   }
   const retry = menu.querySelector<HTMLButtonElement>("[data-action='retranslate']");
   if (retry) {
     retry.hidden = !translationEnabled && state.failed === 0 && !menuError;
     retry.disabled = busy;
-    retry.textContent = state.failed > 0 || menuError ? "重试翻译" : "重新翻译";
+    const retryLabel = state.failed > 0 || menuError ? "重试翻译" : "重新翻译";
+    if (retry.textContent !== retryLabel) retry.textContent = retryLabel;
   }
   const status = menu.querySelector<HTMLElement>("[data-role='translation-status']");
   if (status) {
     status.dataset.tone = menuError || state.failed > 0 ? "error" : "normal";
-    status.textContent = menuError
+    const message = menuError
       ?? (busy
         ? `正在翻译当前区域${state.translated ? `，已完成 ${state.translated} 段` : ""}，点击「原」可停止并恢复原文。`
         : state.failed > 0
@@ -828,8 +888,14 @@ function refreshTranslationState(): void {
               : state.active
                 ? "当前区域暂无可翻译内容，滚动页面将继续翻译。"
                 : "点击悬浮球即可翻译全文。");
+    if (status.textContent !== message) status.textContent = message;
   }
-  if (!menu.hidden && ball) positionMenu(menu, ball);
+  if (!menu.hidden && ball) positionMenu(menu, ball, true);
+}
+
+function floatingBallTitle(action: string): string {
+  const touch = touchInteraction || window.matchMedia?.("(hover: none) and (pointer: coarse)").matches;
+  return `${touch ? "轻点" : "单击"}${action} · ${touch ? "长按" : "悬停"}打开菜单 · 拖动调整位置`;
 }
 
 function showMenuError(error: unknown): void {
@@ -842,8 +908,9 @@ function revealMenu(): void {
   const menu = document.getElementById("wupage-floating-menu");
   const ball = document.getElementById(FLOATING_ID);
   if (menu && ball && floatingBallEnabled && !dragging) {
+    const wasOpen = !menu.hidden;
     setMenuOpen(menu, true);
-    positionMenu(menu, ball);
+    positionMenu(menu, ball, wasOpen);
   }
 }
 
@@ -1143,6 +1210,8 @@ export async function setParagraphMode(enabled: boolean): Promise<void> {
 async function syncFloatingBallFromSettings(): Promise<void> {
   const settings = await getSettings();
   floatingBallEnabled = settings.floatingBallEnabled;
+  const menu = document.getElementById("wupage-floating-menu");
+  if (menu) applyMenuSettings(menu, settings);
   applyFloatingBallVisibility();
 }
 

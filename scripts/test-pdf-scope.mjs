@@ -23,6 +23,11 @@ const gates = [];
 let holdFirstTwo = false;
 const server = createServer(async (request, response) => {
   try {
+    if (request.method === "GET" && request.url === "/scope.pdf") {
+      response.setHeader("content-type", "application/pdf");
+      response.end(await fs.readFile(file));
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += chunk;
     const texts = JSON.parse(JSON.parse(body).messages.at(-1).content).texts;
@@ -39,15 +44,19 @@ let context;
 try {
   context = await chromium.launchPersistentContext(path.join(output, `profile-${Date.now()}`), {
     ...(process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : { channel: "chromium" }),
-    headless: true, ignoreDefaultArgs: ["--disable-extensions"], args: [`--load-extension=${path.join(root, "dist")}`],
+    headless: true, ignoreDefaultArgs: ["--disable-extensions"], args: ["--enable-unsafe-extension-debugging"],
     viewport: { width: 1600, height: 1000 }, acceptDownloads: true
   });
-  const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+  const browserSession = await context.browser().newBrowserCDPSession();
+  await browserSession.send("Extensions.loadUnpacked", { path: path.join(root, "dist") });
+  await browserSession.detach();
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker", { timeout: 30_000 });
   const base = `chrome-extension://${new URL(worker.url()).host}`;
   const reader = await context.newPage();
   const errors = [];
   reader.on("pageerror", error => errors.push(error.message));
-  await reader.goto(`${base}/pdf.html`);
+  // Explicit opt-out isolates the manual scheduling and direct-download checks below.
+  await reader.goto(`${base}/pdf.html?translate=0`);
   await reader.waitForSelector("#provider option", { state: "attached" });
   await reader.evaluate(async (port) => {
     const { data: settings } = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
@@ -84,13 +93,6 @@ try {
   await reader.waitForTimeout(400);
   assert.equal(calls.length, 11, "An idle viewport must not expand the paid range");
 
-  const downloadEvent = reader.waitForEvent("download");
-  await reader.evaluate(() => document.querySelector("#downloadDocument").click());
-  const downloaded = await downloadEvent;
-  const pdf = path.join(output, "partial.pdf");
-  await downloaded.saveAs(pdf);
-  assert.equal((await PDFDocument.load(await fs.readFile(pdf))).getPageCount(), 40);
-  assert.equal(calls.length, 11, "Export must not translate the remaining pages");
   const edited = reader.locator('article[data-page="20"] .translation-block-text').first();
   await edited.fill("手动校对的译文");
   await scrollTo(25);
@@ -130,6 +132,27 @@ try {
   await waitIdle(28);
   assert.equal(calls.at(-1), 6);
   assert(!calls.includes(4) && !calls.includes(7));
+
+  // Download completes the entire document even when reading is limited to one page.
+  const exportDocument = async (name) => {
+    await reader.bringToFront();
+    const downloadEvent = reader.waitForEvent("download", { timeout: 90_000 });
+    await reader.evaluate(() => document.querySelector("#downloadDocument").click());
+    const downloaded = await downloadEvent;
+    const pdf = path.join(output, name);
+    await downloaded.saveAs(pdf);
+    assert.equal((await PDFDocument.load(await fs.readFile(pdf))).getPageCount(), 40);
+    await reader.waitForFunction(() => !document.querySelector("#downloadDocument").disabled);
+  };
+  await exportDocument("full-translated.pdf");
+  assert.equal(calls.length, 40, "Export must translate every remaining page");
+  assert.equal(new Set(calls).size, 40, "Export must reuse completed translations");
+  assert.equal(await edited.textContent(), "手动校对的译文");
+  assert.equal(await reader.locator(".translation-block-text").count(), 40);
+  assert.equal(await reader.evaluate(async () => (await chrome.runtime.sendMessage({ type: "GET_SETTINGS" })).data.pdfTranslationPageRadius), 0);
+  await exportDocument("full-translated-repeat.pdf");
+  assert.equal(calls.length, 40, "Repeated downloads must preserve translations and edits");
+
   await options.locator("#pdfTranslationScope").selectOption("unlimited");
   assert.equal(await options.locator("#pdfTranslationPageRadiusField").isVisible(), false);
   await options.locator("#save").click();
@@ -162,9 +185,57 @@ try {
   await waitIdle(13);
   assert.deepEqual(calls.slice(2).sort((a, b) => a - b), Array.from({ length: 11 }, (_, i) => i + 25));
   assert.equal(new Set(calls).size, 13);
+  const activeJumpCalls = [...calls];
+
+  // A freshly opened PDF can be downloaded without first starting nearby translation.
+  holdFirstTwo = false;
+  calls.length = 0;
+  await openFixture();
+  assert.equal(calls.length, 0);
+  assert.equal(await reader.locator("#downloadDocument").isEnabled(), true);
+  await exportDocument("direct-translated.pdf");
+  assert.equal(calls.length, 40);
+  assert.equal(new Set(calls).size, 40);
+  assert.equal(await reader.locator(".translation-block-text").count(), 40);
+
+  // Normal document-open entry points start the configured nearby range automatically.
+  const pdfBytes = await fs.readFile(file);
+  const automaticSources = ["file", "drop", "url"];
+  for (const source of automaticSources) {
+    calls.length = 0;
+    await reader.goto(`${base}/pdf.html`);
+    await reader.waitForSelector("#provider option", { state: "attached" });
+    assert.equal(calls.length, 0, "A blank workspace has no document to translate");
+    if (source === "file") {
+      await reader.locator("#fileInput").setInputFiles(file);
+    } else if (source === "drop") {
+      const transfer = await reader.evaluateHandle(bytes => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(bytes)], "scope.pdf", { type: "application/pdf" }));
+        return transfer;
+      }, [...pdfBytes]);
+      await reader.locator("#dropZone").dispatchEvent("drop", { dataTransfer: transfer });
+      await transfer.dispose();
+    } else {
+      await reader.locator("#pdfUrl").fill(`http://127.0.0.1:${server.address().port}/scope.pdf`);
+      await reader.locator("#pdfUrl").press("Enter");
+    }
+    await waitIdle(6);
+    assert.equal(calls[0], 1, `${source}: automatic translation starts at the first page`);
+    assert.deepEqual([...calls].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+    await reader.waitForTimeout(300);
+    assert.equal(calls.length, 6, `${source}: automatic translation respects the nearby range`);
+  }
+  await reader.locator("#fileInput").setInputFiles({ name: "second.pdf", mimeType: "application/pdf", buffer: pdfBytes });
+  await waitIdle(12);
+  assert.equal(await reader.locator("#documentName").textContent(), "second.pdf");
+  assert.deepEqual(calls.slice(6).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+  await reader.screenshot({ path: path.join(output, "opened-auto-translated.png") });
   assert.deepEqual(errors, []);
   const report = { samplePages: 40, defaultPages: 11, afterOverlap: 16, afterJump: 26,
-    afterCurrentOnly: 28, afterUnlimited: 40, activeJumpCalls: calls, partialExportPages: 40, preservedEdit: true };
+    afterCurrentOnly: 28, afterFullExport: 40, afterUnlimited: 40, activeJumpCalls,
+    fullExportPages: 40, directExportPages: 40, preservedEdit: true, repeatedExportReused: true,
+    automaticSources, automaticPages: 6, replacementDocumentAutoTranslated: true };
   await fs.writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {

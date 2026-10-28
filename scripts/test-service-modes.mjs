@@ -36,7 +36,7 @@ try{
   });
   const options=await context.newPage();options.setDefaultTimeout(8000);
   const errors=[];options.on('pageerror',error=>errors.push(String(error)));
-  await options.goto(`${extension}/options.html`);await options.locator('#providerTriggerLabel').waitFor();
+  await options.goto(`${extension}/options.html#providerSettings`);await options.locator('#providerTriggerLabel').waitFor();
   const ids=['microsoft-web-translate','google-web-translate','tencent-transmart','yandex-web-translate','volcengine-web-translate','mymemory'];
   async function save(){
     await options.locator('#save').click();
@@ -73,9 +73,11 @@ try{
         assert.equal(await options.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`API settings overflow at ${width}`);
       }
       await options.setViewportSize({width:1100,height:1000});
+      await options.locator('.settings-nav a[href="#performanceSettings"]').click();
       await options.locator('#concurrency').fill('2');
       assert.match(await options.locator('[data-role="provider-scheduling"]').textContent(),/调度并发 2/);
       await options.locator('#concurrency').fill('3');
+      await options.locator('.settings-nav a[href="#providerSettings"]').click();
     }
     await options.locator('[data-field="serviceMode"]').selectOption('free');
     assert.equal(await options.locator('#translationApiFields').isVisible(),false);

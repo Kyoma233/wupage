@@ -72,7 +72,9 @@ export async function loadImageData(url: string): Promise<{ dataUrl: string }> {
   if (!response.ok) throw new Error(`无法读取图片 (${response.status})，请确认图片已加载并且可以访问。`);
   if (Number(response.headers.get("content-length")) > MAX_IMAGE_BYTES) throw new Error("图片过大，请使用 12 MB 以内的图片。");
   const mime = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
-  if (!mime || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime)) throw new Error("图片格式不支持，或图片地址返回了登录页面。");
+  // The content script decodes the downloaded image and rasterizes it to PNG
+  // before OCR. Accept AVIF covers served by sites such as Bilibili as well.
+  if (!mime || !["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(mime)) throw new Error("图片格式不支持，或图片地址返回了登录页面。");
   if (!response.body) throw new Error("图片内容为空。");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
