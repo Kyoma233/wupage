@@ -968,6 +968,38 @@ function setTranslationTextColor(translation: HTMLElement, color: string): void 
   translation.style.setProperty("-webkit-text-fill-color", "currentColor", "important");
 }
 
+// A translation rendered next to its source block inherits typography from the
+// block's container. Pages that set the reading font on the paragraph itself
+// (WSJ sets a serif body font on <p> inside a sans-serif container) then show
+// those translations in a different face than the single-run paragraphs that
+// are rendered inside the <p>. Copy the source block's inherited typography so
+// every translation keeps the look of the text it translates.
+function applySourceTypography(translation: HTMLElement, source: Element): void {
+  const style = window.getComputedStyle(source);
+  const typography: Record<string, string | undefined> = {
+    "font-family": style.fontFamily,
+    "font-weight": style.fontWeight,
+    "font-style": style.fontStyle,
+    "font-stretch": style.fontStretch,
+    "font-feature-settings": style.fontFeatureSettings,
+    "font-variation-settings": style.fontVariationSettings
+  };
+  for (const [property, value] of Object.entries(typography)) {
+    if (!value || value === "inherit") continue;
+    translation.style.setProperty(property, value, "important");
+  }
+  // The mode CSS scales the translation against its parent (0.95em/0.92em). A
+  // translation rendered outside its block is scaled against the container
+  // instead, so re-base that ratio onto the source block's font size.
+  const sourceSize = Number.parseFloat(style.fontSize);
+  const parent = translation.parentElement;
+  const parentSize = parent ? Number.parseFloat(window.getComputedStyle(parent).fontSize) : Number.NaN;
+  const renderedSize = Number.parseFloat(window.getComputedStyle(translation).fontSize);
+  if (sourceSize > 0 && parentSize > 0 && renderedSize > 0) {
+    translation.style.setProperty("font-size", `${(renderedSize * sourceSize) / parentSize}px`, "important");
+  }
+}
+
 function createPendingElement(id: string, mode: RenderMode): HTMLElement {
   const element = document.createElement("span");
   element.className = `${TRANSLATION_CLASS} ${PENDING_CLASS}`;
@@ -1566,6 +1598,25 @@ function insertBlockTranslation(block: Element, translation: Element): void {
 }
 
 function insertGroupedTranslation(
+  group: TrackedGroup,
+  translation: Element,
+  displayMode: TranslationDisplayMode = "bilingual"
+): void {
+  placeGroupedTranslation(group, translation, displayMode);
+  // Only plain prose blocks keep the source typography. Headings, authored
+  // lines, YouTube descriptions and image text have their own container rules
+  // that intentionally restyle the translation, so leave those untouched.
+  const element = translation as HTMLElement;
+  if (
+    !group.block.contains(translation) &&
+    element.dataset.wupageMode === "block" &&
+    !element.hasAttribute("data-wupage-container")
+  ) {
+    applySourceTypography(element, group.block);
+  }
+}
+
+function placeGroupedTranslation(
   group: TrackedGroup,
   translation: Element,
   displayMode: TranslationDisplayMode = "bilingual"
